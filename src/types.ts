@@ -1,7 +1,16 @@
 export interface WebSocketEvent<T = any> {
-  event: string;
+  event: WebSocketEventType;
   data: T;
 }
+
+export type WebSocketEventType =
+  | "initial_state"
+  | "client_count"
+  | "position_update"
+  | "flight_status_update"
+  | "flight_completed"
+  | "manual_update"
+  | "flight_added";
 
 export type DetailedFlight = {
   ident: string;
@@ -285,3 +294,46 @@ export type FlightStatusCategory =
   | "Landed"
   | "Arrived"
   | "Unknown";
+
+export type FlightMetadata = {
+  _id?: string;
+  fa_flight_id: string;
+  flightInfo: DetailedFlight; // From /flights/{id}
+  route_distance: string; // From /flights/{id}/route
+  coordinates: Coordinates[]; // Filed route from /flights/{id}/route
+  status: "scheduled" | "active" | "completed" | "cancelled";
+  flightTrack: {
+    latitude: number;
+    longitude: number;
+    heading: number;
+    timestamp: string;
+  }[]; // From /flights/{id}/track
+  statusHistory: { status: string; timestamp: Date }[]; // Track status changes
+  manualUpdates: { message: string; timestamp: Date }[]; // Ground updates
+  realtimeData?: {
+    last_update: Date;
+    current_position?: { latitude: number; longitude: number; heading: number };
+    flight_status?:
+      | "scheduled"
+      | "boarding"
+      | "departed"
+      | "in_air"
+      | "landed"
+      | "cancelled"
+      | "diverted";
+    departure_delay?: number;
+    arrival_delay?: number;
+  };
+};
+
+export interface InitialState {
+  initial_location: {
+    latitude: number;
+    longitude: number;
+    heading: number;
+    timestamp: string;
+  };
+  client_count: number;
+  flights: FlightMetadata[];
+  current_flight: FlightMetadata | null;
+}

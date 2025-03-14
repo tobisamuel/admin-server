@@ -4,6 +4,8 @@ import {
   type FlightData,
   type FlightSearchResponse,
   type DirectFlightResponse,
+  type FlightMetadata,
+  type WebSocketEventType,
 } from "./types";
 import { getAirportInfo, getFlightInfo, getFlightRouteData } from "./aeroapi";
 
@@ -137,16 +139,39 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
       getFlightRouteData(fa_flight_id),
     ]);
 
-    // insert data into flight collection
-    await db.collection("flights").insertOne({
+    // Check if flightInfo.flights is empty or undefined
+    if (!flightInfo?.flights || flightInfo.flights.length === 0) {
+      return jsonWithCors(
+        {
+          error: "Flight information not found for the provided fa_flight_id",
+        },
+        { status: 404 } // Return a 404 Not Found status
+      );
+    }
+
+    const flight = flightInfo.flights[0];
+    // We've already checked that flight exists
+    const flightMetadata = {
       fa_flight_id,
+      flightInfo: flight,
       route_distance,
-      origin: originAirportInfo,
-      destination: destinationAirportInfo,
-      flightInfo: flightInfo.flights[0],
-      flightRoute: fixes,
+      coordinates: fixes,
       status: "scheduled",
-    });
+      flightTrack: [],
+      statusHistory: [{ status: "scheduled", timestamp: new Date() }],
+      manualUpdates: [],
+      realtimeData: {
+        last_update: new Date(),
+        flight_status: "scheduled",
+        departure_delay: flight?.departure_delay || 0,
+        arrival_delay: flight?.arrival_delay || 0,
+      },
+    };
+
+    await db.collection("flights").insertOne(flightMetadata);
+
+    // If you have a broadcastUpdate function
+    // broadcastUpdate("flight_added", flightMetadata);
 
     return jsonWithCors({
       message: "Flight metadata generated and saved",
