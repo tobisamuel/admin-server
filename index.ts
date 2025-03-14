@@ -12,6 +12,7 @@ import {
   type WebSocketEvent,
   type WebSocketEventType,
   type FlightMetadata,
+  type InitialState,
 } from "./src/types";
 import { db } from "./src/utils";
 
@@ -21,6 +22,7 @@ let currentFlightId: string | null = null;
 
 // hard coded for now
 const initialLocation = {
+  country: "Antartica",
   latitude: -79.777778,
   longitude: -83.320833,
   heading: 0,
@@ -233,7 +235,7 @@ async function getInitialState() {
   const activeFlightData = flights.find((f) => f.status === "active") || null;
 
   return {
-    initial_location: initialLocation,
+    current_location: initialLocation,
     client_count: clients.size,
     flights: flights.map((f) => ({
       ...f,

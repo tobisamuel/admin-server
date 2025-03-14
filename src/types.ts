@@ -327,7 +327,8 @@ export type FlightMetadata = {
 };
 
 export interface InitialState {
-  initial_location: {
+  current_location: {
+    country: string;
     latitude: number;
     longitude: number;
     heading: number;
