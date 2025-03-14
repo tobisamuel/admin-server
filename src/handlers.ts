@@ -127,6 +127,7 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
 
     console.log("origin", origin);
     console.log("destination", destination);
+    
     const [
       originAirportInfo,
       destinationAirportInfo,
@@ -153,7 +154,11 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
     // We've already checked that flight exists
     const flightMetadata = {
       fa_flight_id,
-      flightInfo: flight,
+      flightInfo: {
+        ...flight,
+        origin: originAirportInfo,
+        destination: destinationAirportInfo,
+      },
       route_distance,
       coordinates: fixes,
       status: "scheduled",

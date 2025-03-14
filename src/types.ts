@@ -10,7 +10,8 @@ export type WebSocketEventType =
   | "flight_status_update"
   | "flight_completed"
   | "manual_update"
-  | "flight_added";
+  | "flight_added"
+  | "global_stats_update";
 
 export type DetailedFlight = {
   ident: string;
@@ -296,7 +297,6 @@ export type FlightStatusCategory =
   | "Unknown";
 
 export type FlightMetadata = {
-  _id?: string;
   fa_flight_id: string;
   flightInfo: DetailedFlight; // From /flights/{id}
   route_distance: string; // From /flights/{id}/route
@@ -326,7 +326,24 @@ export type FlightMetadata = {
   };
 };
 
+
+
+/**
+ * Represents global statistics for all flights
+ */
+export interface GlobalStats {
+  _id: string;  // Will be "global"
+  total_miles: number;
+  total_countries: string[];  // Array of unique country codes
+  total_flights: number;
+  last_updated: Date;
+}
+
+/**
+ * Extended initial state to include global stats
+ */
 export interface InitialState {
+  client_count: number;
   current_location: {
     country: string;
     latitude: number;
@@ -334,7 +351,7 @@ export interface InitialState {
     heading: number;
     timestamp: string;
   };
-  client_count: number;
-  flights: FlightMetadata[];
   current_flight: FlightMetadata | null;
+  flights: FlightMetadata[];
+  global_stats: GlobalStats;
 }

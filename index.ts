@@ -8,17 +8,95 @@ import {
   getSavedFlights,
   deleteFlight,
 } from "./src/handlers";
-import {
-  type WebSocketEvent,
-  type WebSocketEventType,
-  type FlightMetadata,
-  type InitialState,
-} from "./src/types";
-import { db } from "./src/utils";
+import { type FlightMetadata, type WebSocketEvent, type WebSocketEventType } from "./src/types";
+import { calculateCountriesVisited, db } from "./src/utils";
 
 const clients = new Set<ServerWebSocket>();
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
 let currentFlightId: string | null = null;
+
+const server = Bun.serve({
+  port: process.env.PORT || 3001,
+  routes: {
+    // Flight management endpoints
+    "/api/flights/search": {
+      POST: searchScheduledFlights,
+      OPTIONS: handleCorsOptions,
+    },
+    "/api/flights/save": {
+      POST: generateFlightMetadataAndSave,
+      OPTIONS: handleCorsOptions,
+    },
+    "/api/flights": {
+      GET: getSavedFlights,
+      DELETE: deleteFlight,
+      OPTIONS: handleCorsOptions,
+    },
+    // Tracking control endpoints
+    "/api/tracking/start": {
+      POST: handleStartTracking,
+      OPTIONS: handleCorsOptions,
+    },
+    "/api/tracking/stop": {
+      POST: handleStopTracking,
+      OPTIONS: handleCorsOptions,
+    },
+    // Manual update endpoint
+    "/api/flights/manual-update": {
+      POST: handleManualUpdate,
+      OPTIONS: handleCorsOptions,
+    },
+    // Status endpoint
+    "/api/status": {
+      GET: async (_req: Request): Promise<Response> => {
+        const status = await getInitialState();
+        return jsonWithCors(status);
+      },
+      OPTIONS: handleCorsOptions,
+    },
+  },
+  fetch(req: Request, server: Server): Response | Promise<Response> {
+    if (server.upgrade(req)) {
+      return new Response(null, { status: 101 });
+    }
+    return jsonWithCors({ error: "Not found" }, { status: 404 });
+  },
+  error(error: Error) {
+    console.error("Server error:", error);
+    return new Response(`Internal Server Error: ${error.message}`, {
+      status: 500,
+    });
+  },
+  websocket: {
+    open(ws: ServerWebSocket) {
+      clients.add(ws);
+      ws.subscribe("flight-updates");
+
+      // Send initial state to the new client
+      getInitialState().then((state) => {
+        ws.send(
+          JSON.stringify({
+            event: "initial_state",
+            data: state,
+          })
+        );
+      });
+
+      // Broadcast updated client count to all clients
+      broadcastUpdate("client_count", clients.size);
+    },
+    message(ws: ServerWebSocket, message: string | Buffer) {
+      console.log("Received message:", message.toString());
+    },
+    close(ws: ServerWebSocket) {
+      clients.delete(ws);
+      ws.unsubscribe("flight-updates");
+      broadcastUpdate("client_count", clients.size);
+    },
+  },
+});
+
+console.log(`Admin server running at ${server.hostname}:${server.port}`);
 
 // hard coded for now
 const initialLocation = {
@@ -26,7 +104,7 @@ const initialLocation = {
   latitude: -79.777778,
   longitude: -83.320833,
   heading: 0,
-  timestamp: new Date().toISOString(),
+  timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
 };
 
 async function startPolling(faFlightId: string) {
@@ -231,19 +309,26 @@ async function stopPolling(faFlightId: string) {
 }
 
 async function getInitialState() {
-  const flights = await db.collection("flights").find({}).toArray();
+  const flights = await db.collection<FlightMetadata>("flights").find({}).toArray();
+  const completedFlights = flights.filter((f) => f.status === "completed");
   const activeFlightData = flights.find((f) => f.status === "active") || null;
 
   return {
-    current_location: initialLocation,
+    stats: {
+      total_miles: completedFlights.reduce((acc, f) => acc + f.flightInfo.route_distance, 0),
+      total_countries: calculateCountriesVisited(completedFlights),
+      total_flights: completedFlights.length,
+      last_updated: new Date(),
+    },
     client_count: clients.size,
+    current_location: initialLocation,
+    current_flight: activeFlightData,
     flights: flights.map((f) => ({
       ...f,
       flightTrack: f.flightTrack || [],
       statusHistory: f.statusHistory || [],
       manualUpdates: f.manualUpdates || [],
     })),
-    current_flight: activeFlightData,
   };
 }
 
@@ -340,85 +425,6 @@ async function handleManualUpdate(req: Request): Promise<Response> {
   }
 }
 
-const server = Bun.serve({
-  port: process.env.PORT || 3001,
-  routes: {
-    // Flight management endpoints
-    "/api/flights/search": {
-      POST: searchScheduledFlights,
-      OPTIONS: handleCorsOptions,
-    },
-    "/api/flights/save": {
-      POST: generateFlightMetadataAndSave,
-      OPTIONS: handleCorsOptions,
-    },
-    "/api/flights": {
-      GET: getSavedFlights,
-      DELETE: deleteFlight,
-      OPTIONS: handleCorsOptions,
-    },
-    // Tracking control endpoints
-    "/api/tracking/start": {
-      POST: handleStartTracking,
-      OPTIONS: handleCorsOptions,
-    },
-    "/api/tracking/stop": {
-      POST: handleStopTracking,
-      OPTIONS: handleCorsOptions,
-    },
-    // Manual update endpoint
-    "/api/flights/manual-update": {
-      POST: handleManualUpdate,
-      OPTIONS: handleCorsOptions,
-    },
-    // Status endpoint
-    "/api/status": {
-      GET: async (_req: Request): Promise<Response> => {
-        const status = await getInitialState();
-        return jsonWithCors(status);
-      },
-      OPTIONS: handleCorsOptions,
-    },
-  },
-  fetch(req: Request, server: Server): Response | Promise<Response> {
-    if (server.upgrade(req)) {
-      return new Response(null, { status: 101 });
-    }
-    return jsonWithCors({ error: "Not found" }, { status: 404 });
-  },
-  error(error: Error) {
-    console.error("Server error:", error);
-    return new Response(`Internal Server Error: ${error.message}`, {
-      status: 500,
-    });
-  },
-  websocket: {
-    open(ws: ServerWebSocket) {
-      clients.add(ws);
-      ws.subscribe("flight-updates");
 
-      // Send initial state to the new client
-      getInitialState().then((state) => {
-        ws.send(
-          JSON.stringify({
-            event: "initial_state",
-            data: state,
-          })
-        );
-      });
 
-      // Broadcast updated client count to all clients
-      broadcastUpdate("client_count", clients.size);
-    },
-    message(ws: ServerWebSocket, message: string | Buffer) {
-      console.log("Received message:", message.toString());
-    },
-    close(ws: ServerWebSocket) {
-      clients.delete(ws);
-      ws.unsubscribe("flight-updates");
-      broadcastUpdate("client_count", clients.size);
-    },
-  },
-});
 
-console.log(`Admin server running at ${server.hostname}:${server.port}`);
