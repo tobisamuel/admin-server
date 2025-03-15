@@ -8,7 +8,11 @@ import {
   getSavedFlights,
   deleteFlight,
 } from "./src/handlers";
-import { type FlightMetadata, type WebSocketEvent, type WebSocketEventType } from "./src/types";
+import {
+  type FlightMetadata,
+  type WebSocketEvent,
+  type WebSocketEventType,
+} from "./src/types";
 import { calculateCountriesVisited, db } from "./src/utils";
 
 const clients = new Set<ServerWebSocket>();
@@ -46,12 +50,9 @@ const server = Bun.serve({
       POST: handleManualUpdate,
       OPTIONS: handleCorsOptions,
     },
-    // Status endpoint
-    "/api/status": {
-      GET: async (_req: Request): Promise<Response> => {
-        const status = await getInitialState();
-        return jsonWithCors(status);
-      },
+    // Health check endpoint
+    "/api/health": {
+      GET: () => jsonWithCors({ status: "ok" }),
       OPTIONS: handleCorsOptions,
     },
   },
@@ -311,13 +312,19 @@ async function stopPolling(faFlightId: string) {
 }
 
 async function getInitialState() {
-  const flights = await db.collection<FlightMetadata>("flights").find({}).toArray();
+  const flights = await db
+    .collection<FlightMetadata>("flights")
+    .find({})
+    .toArray();
   const completedFlights = flights.filter((f) => f.status === "completed");
   const activeFlightData = flights.find((f) => f.status === "active") || null;
 
   return {
     stats: {
-      total_miles: completedFlights.reduce((acc, f) => acc + f.flightInfo.route_distance, 0),
+      total_miles: completedFlights.reduce(
+        (acc, f) => acc + f.flightInfo.route_distance,
+        0
+      ),
       total_countries: calculateCountriesVisited(completedFlights),
       total_flights: completedFlights.length,
       last_updated: new Date(),
@@ -427,7 +434,3 @@ async function handleManualUpdate(req: Request): Promise<Response> {
     );
   }
 }
-
-
-
-
