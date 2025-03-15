@@ -13,6 +13,33 @@ export type WebSocketEventType =
   | "flight_added"
   | "global_stats_update";
 
+// AeroAPI error types
+export type AeroApiError = {
+  title: string;
+  reason: string;
+  detail: string;
+  status: number;
+};
+
+export type AirportResponse = {
+  airport_code: string;
+  code_icao: string;
+  code_iata: string;
+  code_lid: string;
+  name: string;
+  type: string;
+  elevation: number;
+  city: string;
+  state: string;
+  longitude: number;
+  latitude: number;
+  timezone: string;
+  country_code: string;
+  wiki_url: string;
+  airport_flights_url: string;
+  alternatives: AirportResponse[];
+};
+
 export type DetailedFlight = {
   ident: string;
   ident_icao: string;
@@ -33,8 +60,26 @@ export type DetailedFlight = {
   diverted: boolean;
   cancelled: boolean;
   position_only: boolean;
-  origin: Airport;
-  destination: Airport;
+  origin: {
+    code: string;
+    code_icao: string;
+    code_iata: string;
+    code_lid: string;
+    timezone: string;
+    name: string;
+    city: string;
+    airport_info_url: string;
+  };
+  destination: {
+    code: string;
+    code_icao: string;
+    code_iata: string;
+    code_lid: string;
+    timezone: string;
+    name: string;
+    city: string;
+    airport_info_url: string;
+  };
   departure_delay: number;
   arrival_delay: number;
   filed_ete: number;
@@ -67,6 +112,13 @@ export type DetailedFlight = {
   terminal_origin: string;
   terminal_destination: string;
   type: string;
+  waypoints: string[];
+};
+
+export type FlightInfoResponse = {
+  flights: DetailedFlight[];
+  links: null;
+  num_pages: number;
 };
 
 type Coordinates = {
@@ -80,48 +132,17 @@ type Coordinates = {
   type: string;
 };
 
-export type FlightInfoResponse = {
-  flights: DetailedFlight[];
-  links: null;
-  num_pages: number;
+// Request body types
+export type FlightSearchParams = {
+  startDate?: string;
+  endDate?: string;
+  origin?: string;
+  destination?: string;
+  airline?: string;
+  flightNumber?: string;
 };
 
-export type AirportResponse = {
-  airport_code: string;
-  code_icao: string;
-  code_iata: string;
-  code_lid: string;
-  name: string;
-  type: string;
-  elevation: number;
-  city: string;
-  state: string;
-  longitude: number;
-  latitude: number;
-  timezone: string;
-  country_code: string;
-  wiki_url: string;
-  airport_flights_url: string;
-  alternatives: AirportResponse[];
-};
-
-export type Airport = {
-  airport_code: string;
-  code_icao: string;
-  code_iata: string;
-  code_lid: string;
-  name: string;
-  type: string;
-  elevation: number;
-  city: string;
-  state: string;
-  longitude: number;
-  latitude: number;
-  timezone: string;
-  country_code: string;
-};
-
-export type FlightData = {
+export type FlightCreationData = {
   fa_flight_id: string;
   origin: string;
   destination: string;
@@ -187,8 +208,36 @@ export type FlightPositionResponse = {
   ident_iata: string;
   fa_flight_id: string;
   registration: string;
-  origin: Airport;
-  destination: Airport;
+  origin: {
+    airport_code: string;
+    code_icao: string;
+    code_iata: string;
+    code_lid: string;
+    name: string;
+    type: string;
+    elevation: number;
+    city: string;
+    state: string;
+    longitude: number;
+    latitude: number;
+    timezone: string;
+    country_code: string;
+  };
+  destination: {
+    airport_code: string;
+    code_icao: string;
+    code_iata: string;
+    code_lid: string;
+    name: string;
+    type: string;
+    elevation: number;
+    city: string;
+    state: string;
+    longitude: number;
+    latitude: number;
+    timezone: string;
+    country_code: string;
+  };
   waypoints: string[];
   first_position_time: string;
   last_position: {
@@ -326,15 +375,13 @@ export type FlightMetadata = {
   };
 };
 
-
-
 /**
  * Represents global statistics for all flights
  */
 export interface GlobalStats {
-  _id: string;  // Will be "global"
+  _id: string; // Will be "global"
   total_miles: number;
-  total_countries: string[];  // Array of unique country codes
+  total_countries: string[]; // Array of unique country codes
   total_flights: number;
   last_updated: Date;
 }

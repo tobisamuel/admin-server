@@ -1,7 +1,9 @@
 import { jsonWithCors } from "./cors";
 import { db } from "./utils";
 import {
-  type FlightData,
+  type AeroApiError,
+  type FlightCreationData,
+  type FlightSearchParams,
   type FlightSearchResponse,
   type DirectFlightResponse,
   type FlightMetadata,
@@ -10,22 +12,6 @@ import {
 import { getAirportInfo, getFlightInfo, getFlightRouteData } from "./aeroapi";
 
 type Headers = Record<string, string>;
-
-interface AeroApiError {
-  title: string;
-  reason: string;
-  detail: string;
-  status: number;
-}
-
-interface FlightSearchParams {
-  startDate?: string;
-  endDate?: string;
-  origin?: string;
-  destination?: string;
-  airline?: string;
-  flightNumber?: string;
-}
 
 const AERO_API_KEY = process.env.AERO_API_KEY;
 const AERO_API_BASE = "https://aeroapi.flightaware.com/aeroapi";
@@ -123,11 +109,8 @@ export const searchScheduledFlights = async (req: Request) => {
 export const generateFlightMetadataAndSave = async (req: Request) => {
   try {
     const { fa_flight_id, origin, destination } =
-      (await req.json()) as FlightData;
+      (await req.json()) as FlightCreationData;
 
-    console.log("origin", origin);
-    console.log("destination", destination);
-    
     const [
       originAirportInfo,
       destinationAirportInfo,

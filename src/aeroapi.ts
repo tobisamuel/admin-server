@@ -1,5 +1,4 @@
 import {
-  type Airport,
   type AirportResponse,
   type FlightInfoResponse,
   type FlightPositionResponse,
@@ -23,7 +22,7 @@ export async function getFlightInfo(
   return flightData;
 }
 
-export async function getAirportInfo(code: string): Promise<Airport> {
+export async function getAirportInfo(code: string) {
   const data = await fetch(`${AERO_API_BASE}/airports/${code}`, {
     headers: {
       "x-apikey": AERO_API_KEY!,
@@ -32,21 +31,7 @@ export async function getAirportInfo(code: string): Promise<Airport> {
 
   const airportData = (await data.json()) as AirportResponse;
 
-  return {
-    airport_code: airportData.airport_code,
-    code_icao: airportData.code_icao,
-    code_iata: airportData.code_iata,
-    code_lid: airportData.code_lid,
-    name: airportData.name,
-    type: airportData.type,
-    elevation: airportData.elevation,
-    city: airportData.city,
-    state: airportData.state,
-    longitude: airportData.longitude,
-    latitude: airportData.latitude,
-    timezone: airportData.timezone,
-    country_code: airportData.country_code,
-  };
+  return airportData;
 }
 
 export async function getFlightRouteData(faFlightId: string) {
@@ -63,7 +48,7 @@ export async function getFlightRouteData(faFlightId: string) {
 
 export async function getFlightPosition(
   faFlightId: string
-): Promise<FlightPositionResponse["last_position"]> {
+): Promise<FlightPositionResponse> {
   const data = await fetch(`${AERO_API_BASE}/flights/${faFlightId}/position`, {
     headers: {
       "x-apikey": AERO_API_KEY!,
@@ -72,5 +57,5 @@ export async function getFlightPosition(
 
   const positionData = (await data.json()) as FlightPositionResponse;
   // return last position
-  return positionData.last_position;
+  return positionData;
 }

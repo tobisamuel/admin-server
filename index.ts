@@ -155,10 +155,10 @@ async function startPolling(faFlightId: string) {
         // Prepare position update if available
         const newCoordinate = positionData
           ? {
-              latitude: positionData.latitude,
-              longitude: positionData.longitude,
-              heading: positionData.heading,
-              timestamp: positionData.timestamp,
+              latitude: positionData.last_position.latitude,
+              longitude: positionData.last_position.longitude,
+              heading: positionData.last_position.heading,
+              timestamp: positionData.last_position.timestamp,
             }
           : null;
 
@@ -186,6 +186,7 @@ async function startPolling(faFlightId: string) {
         // Update flight data in database
         const updateOperation: any = {
           $set: {
+            "flightInfo.waypoints": positionData.waypoints,
             "realtimeData.last_update": new Date(),
             "flightInfo.status": flight.status,
             "realtimeData.flight_status": flightStatus,
@@ -220,6 +221,7 @@ async function startPolling(faFlightId: string) {
           broadcastUpdate("position_update", {
             flight_id: faFlightId,
             position: newCoordinate,
+            waypoints: positionData.waypoints,
           });
         }
 
@@ -329,6 +331,7 @@ async function getInitialState() {
       statusHistory: f.statusHistory || [],
       manualUpdates: f.manualUpdates || [],
     })),
+    waypoints: activeFlightData?.flightInfo.waypoints || [],
   };
 }
 
