@@ -1,5 +1,6 @@
 import { MongoClient } from "mongodb";
-import type { FlightMetadata } from "./types";
+
+import type { AirportResponse, DetailedFlight, FlightMetadata } from "./types";
 
 let MONGODB_URI = process.env.MONGODB_URI;
 
@@ -15,29 +16,83 @@ const db = client.db("alma-db");
 
 export { db };
 
-export function calculateCountriesVisited(flights: FlightMetadata[]): string[] {
+/**
+ * Formats flight and airport data into a standardized structure
+ * @param flight The detailed flight information from the API
+ * @param originAirportInfo Information about the origin airport
+ * @param destinationAirportInfo Information about the destination airport
+ * @returns A formatted flight data object with all necessary fields
+ */
+export function formatFlightData(
+  flight: DetailedFlight,
+  originAirportInfo: AirportResponse,
+  destinationAirportInfo: AirportResponse
+): FlightMetadata {
+  return {
+    ident: flight.ident,
+    ident_icao: flight.ident_icao,
+    ident_iata: flight.ident_iata,
+    actual_runway_off: flight.actual_runway_off,
+    actual_runway_on: flight.actual_runway_on,
+    fa_flight_id: flight.fa_flight_id,
+    operator: flight.operator,
+    operator_icao: flight.operator_icao,
+    operator_iata: flight.operator_iata,
+    flight_number: flight.flight_number,
+    registration: flight.registration,
+    atc_ident: flight.atc_ident,
+    blocked: flight.blocked,
+    diverted: flight.diverted,
+    cancelled: flight.cancelled,
+    origin: originAirportInfo,
+    destination: destinationAirportInfo,
+    departure_delay: flight.departure_delay,
+    arrival_delay: flight.arrival_delay,
+    filed_ete: flight.filed_ete,
+    scheduled_out: flight.scheduled_out,
+    estimated_out: flight.estimated_out,
+    actual_out: flight.actual_out,
+    scheduled_off: flight.scheduled_off,
+    estimated_off: flight.estimated_off,
+    actual_off: flight.actual_off,
+    scheduled_on: flight.scheduled_on,
+    estimated_on: flight.estimated_on,
+    actual_on: flight.actual_on,
+    scheduled_in: flight.scheduled_in,
+    estimated_in: flight.estimated_in,
+    actual_in: flight.actual_in,
+    progress_percent: flight.progress_percent,
+    status: flight.status,
+    aircraft_type: flight.aircraft_type,
+    route_distance: flight.route_distance,
+    filed_airspeed: flight.filed_airspeed,
+    filed_altitude: flight.filed_altitude,
+    route: flight.route,
+    is_tracking: false,
+    waypoints: [],
+  };
+}
+
+export function getCountriesVisited(flights: FlightMetadata[]) {
   if (flights.length === 0) return [];
-  
+
   // Using Set to automatically handle duplicates
   const visitedCountries = new Set<string>();
-  
+
+  const firstCountry = flights[0]?.origin.country_code;
+  // Always include the starting point (origin of first flight) regardless of completion status
+  visitedCountries.add(firstCountry!);
+
   // Process flights in order
-  flights.forEach((flight, index) => {
+  flights.forEach((flight) => {
     // Only count countries from completed flights
     if (flight.status === "completed") {
-      // Add destination country for all flights
-      const destinationCountry = flight.flightInfo.destination.country_code;
-      visitedCountries.add(destinationCountry);
-      
-      // For flights after the first one, also add the origin country
-      // (We skip the first origin country as it's the home country)
-      if (index > 0) {
-        const originCountry = flight.flightInfo.origin.country_code;
-        visitedCountries.add(originCountry);
-      }
+      // Add both origin and destination countries for all flights
+      visitedCountries.add(flight.origin!.country_code);
+      visitedCountries.add(flight.destination!.country_code);
     }
   });
-  
+
   // Return array of visited countries
   return Array.from(visitedCountries);
 }

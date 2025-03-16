@@ -3,17 +3,18 @@ import { type ServerWebSocket, type Server } from "bun";
 import { getFlightPosition, getFlightInfo } from "./src/aeroapi";
 import { jsonWithCors, handleCorsOptions } from "./src/cors";
 import {
-  searchScheduledFlights,
+  searchFlights,
   generateFlightMetadataAndSave,
   getSavedFlights,
   deleteFlight,
+  updateWaypoints,
 } from "./src/handlers";
 import {
   type FlightMetadata,
   type WebSocketEvent,
   type WebSocketEventType,
 } from "./src/types";
-import { calculateCountriesVisited, db } from "./src/utils";
+import { getCountriesVisited, db } from "./src/utils";
 
 const clients = new Set<ServerWebSocket>();
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
@@ -24,7 +25,7 @@ const server = Bun.serve({
   routes: {
     // Flight management endpoints
     "/api/flights/search": {
-      POST: searchScheduledFlights,
+      POST: searchFlights,
       OPTIONS: handleCorsOptions,
     },
     "/api/flights/save": {
@@ -34,6 +35,10 @@ const server = Bun.serve({
     "/api/flights": {
       GET: getSavedFlights,
       DELETE: deleteFlight,
+      OPTIONS: handleCorsOptions,
+    },
+    "/api/flights/update_waypoints": {
+      POST: updateWaypoints,
       OPTIONS: handleCorsOptions,
     },
     // Tracking control endpoints
@@ -84,7 +89,7 @@ const server = Bun.serve({
       });
 
       // Broadcast updated client count to all clients
-      broadcastUpdate("client_count", clients.size);
+      broadcastUpdate("client_added", clients.size);
     },
     message(ws: ServerWebSocket, message: string | Buffer) {
       console.log("Received message:", message.toString());
@@ -92,21 +97,51 @@ const server = Bun.serve({
     close(ws: ServerWebSocket) {
       clients.delete(ws);
       ws.unsubscribe("flight-updates");
-      broadcastUpdate("client_count", clients.size);
+      broadcastUpdate("client_removed", clients.size);
     },
   },
 });
 
 console.log(`Admin server running at ${server.hostname}:${server.port}`);
 
-// hard coded for now
-const initialLocation = {
-  country: "Antartica",
-  latitude: -79.777778,
-  longitude: -83.320833,
-  heading: 0,
-  timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-};
+function broadcastUpdate<T>(event: WebSocketEventType, data: T) {
+  const update: WebSocketEvent<T> = { event, data };
+  server.publish("flight-updates", JSON.stringify(update));
+}
+
+async function getInitialState() {
+  const flights = await db
+    .collection<FlightMetadata>("flights")
+    .find({})
+    .toArray();
+
+  const firstFlight = flights[0];
+  const initialLocation = {
+    country: firstFlight?.origin.country_code,
+    latitude: firstFlight?.origin.latitude,
+    longitude: firstFlight?.origin.longitude,
+    heading: 0,
+    timestamp: new Date(Date.now() - 12 * 60 * 60 * 1000),
+  };
+  const completedFlights = flights.filter((f) => f.status === "completed");
+  const activeFlightData = flights.find((f) => f.is_tracking) || null;
+
+  return {
+    client_count: clients.size,
+    active_flight: activeFlightData,
+    current_location: initialLocation,
+    completed_flights: completedFlights,
+    stats: {
+      total_miles: completedFlights.reduce(
+        (acc, f) => acc + f.route_distance,
+        0
+      ),
+      total_countries: getCountriesVisited(flights),
+      total_flights: completedFlights.length,
+      last_updated: new Date(),
+    },
+  };
+}
 
 async function startPolling(faFlightId: string) {
   try {
@@ -309,42 +344,6 @@ async function stopPolling(faFlightId: string) {
     console.error("Error stopping flight tracking:", error);
     return false;
   }
-}
-
-async function getInitialState() {
-  const flights = await db
-    .collection<FlightMetadata>("flights")
-    .find({})
-    .toArray();
-  const completedFlights = flights.filter((f) => f.status === "completed");
-  const activeFlightData = flights.find((f) => f.status === "active") || null;
-
-  return {
-    stats: {
-      total_miles: completedFlights.reduce(
-        (acc, f) => acc + f.flightInfo.route_distance,
-        0
-      ),
-      total_countries: calculateCountriesVisited(completedFlights),
-      total_flights: completedFlights.length,
-      last_updated: new Date(),
-    },
-    client_count: clients.size,
-    current_location: initialLocation,
-    current_flight: activeFlightData,
-    flights: flights.map((f) => ({
-      ...f,
-      flightTrack: f.flightTrack || [],
-      statusHistory: f.statusHistory || [],
-      manualUpdates: f.manualUpdates || [],
-    })),
-    waypoints: activeFlightData?.flightInfo.waypoints || [],
-  };
-}
-
-function broadcastUpdate<T>(event: WebSocketEventType, data: T) {
-  const update: WebSocketEvent<T> = { event, data };
-  server.publish("flight-updates", JSON.stringify(update));
 }
 
 // Modified route handlers for tracking

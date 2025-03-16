@@ -1,5 +1,5 @@
+import { getAirportInfo, getFlightInfo, getFlightPosition } from "./aeroapi";
 import { jsonWithCors } from "./cors";
-import { db } from "./utils";
 import {
   type AeroApiError,
   type FlightCreationData,
@@ -7,17 +7,15 @@ import {
   type FlightSearchResponse,
   type DirectFlightResponse,
   type FlightMetadata,
-  type WebSocketEventType,
 } from "./types";
-import { getAirportInfo, getFlightInfo, getFlightRouteData } from "./aeroapi";
+import { db, formatFlightData } from "./utils";
 
 type Headers = Record<string, string>;
 
 const AERO_API_KEY = process.env.AERO_API_KEY;
 const AERO_API_BASE = "https://aeroapi.flightaware.com/aeroapi";
-const WS_SERVER_URL = process.env.WS_SERVER_URL || "http://localhost:3002";
 
-export const searchScheduledFlights = async (req: Request) => {
+export const searchFlights = async (req: Request) => {
   try {
     const { startDate, endDate, origin, destination, airline, flightNumber } =
       (await req.json()) as FlightSearchParams;
@@ -38,6 +36,7 @@ export const searchScheduledFlights = async (req: Request) => {
 
       if (!response.ok) {
         const errorData = (await response.json()) as AeroApiError;
+
         return jsonWithCors(
           {
             error: errorData.detail || "Failed to search flights",
@@ -49,7 +48,8 @@ export const searchScheduledFlights = async (req: Request) => {
       }
 
       const data = (await response.json()) as DirectFlightResponse;
-      return jsonWithCors({
+
+      return jsonWithCors<{ flights: DirectFlightResponse["flights"] }>({
         flights: data.flights,
       });
     }
@@ -63,6 +63,8 @@ export const searchScheduledFlights = async (req: Request) => {
         { status: 400 }
       );
     }
+
+    console.log("using schedules endpoint");
 
     const params = new URLSearchParams();
     if (origin) params.set("origin", origin);
@@ -91,7 +93,9 @@ export const searchScheduledFlights = async (req: Request) => {
 
     const data = (await response.json()) as FlightSearchResponse;
 
-    return jsonWithCors({
+    return jsonWithCors<{
+      flights: FlightSearchResponse["scheduled"];
+    }>({
       flights: data.scheduled,
     });
   } catch (error) {
@@ -111,20 +115,14 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
     const { fa_flight_id, origin, destination } =
       (await req.json()) as FlightCreationData;
 
-    const [
-      originAirportInfo,
-      destinationAirportInfo,
-      flightInfo,
-      { route_distance, fixes },
-    ] = await Promise.all([
-      getAirportInfo(origin),
-      getAirportInfo(destination),
-      getFlightInfo(fa_flight_id),
-      getFlightRouteData(fa_flight_id),
-    ]);
+    const [originAirportInfo, destinationAirportInfo, flightResponse] =
+      await Promise.all([
+        getAirportInfo(origin),
+        getAirportInfo(destination),
+        getFlightInfo(fa_flight_id),
+      ]);
 
-    // Check if flightInfo.flights is empty or undefined
-    if (!flightInfo?.flights || flightInfo.flights.length === 0) {
+    if (!flightResponse?.flights || flightResponse.flights.length === 0) {
       return jsonWithCors(
         {
           error: "Flight information not found for the provided fa_flight_id",
@@ -133,33 +131,14 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
       );
     }
 
-    const flight = flightInfo.flights[0];
-    // We've already checked that flight exists
-    const flightMetadata = {
-      fa_flight_id,
-      flightInfo: {
-        ...flight,
-        origin: originAirportInfo,
-        destination: destinationAirportInfo,
-      },
-      route_distance,
-      coordinates: fixes,
-      status: "scheduled",
-      flightTrack: [],
-      statusHistory: [{ status: "scheduled", timestamp: new Date() }],
-      manualUpdates: [],
-      realtimeData: {
-        last_update: new Date(),
-        flight_status: "scheduled",
-        departure_delay: flight?.departure_delay || 0,
-        arrival_delay: flight?.arrival_delay || 0,
-      },
-    };
+    const flight = flightResponse.flights[0]!;
+    const flightMetadata = formatFlightData(
+      flight,
+      originAirportInfo,
+      destinationAirportInfo
+    );
 
     await db.collection("flights").insertOne(flightMetadata);
-
-    // If you have a broadcastUpdate function
-    // broadcastUpdate("flight_added", flightMetadata);
 
     return jsonWithCors({
       message: "Flight metadata generated and saved",
@@ -177,11 +156,12 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
 };
 
 export const getSavedFlights = async (req: Request) => {
-  const flights = await db.collection("flights").find({}).toArray();
+  const flights = await db
+    .collection<FlightMetadata>("flights")
+    .find({})
+    .toArray();
 
-  return jsonWithCors({
-    flights,
-  });
+  return jsonWithCors<typeof flights>(flights);
 };
 
 export const deleteFlight = async (req: Request) => {
@@ -192,119 +172,56 @@ export const deleteFlight = async (req: Request) => {
   return jsonWithCors({ message: "Flight deleted" });
 };
 
-export const startTracking = async (req: Request) => {
-  try {
-    const body = (await req.json()) as { fa_flight_id: string };
-    const { fa_flight_id } = body;
+export const updateWaypoints = async (req: Request) => {
+  const { fa_flight_id } = (await req.json()) as {
+    fa_flight_id: string;
+  };
 
-    // First check if the flight exists
-    const flight = await db.collection("flights").findOne({ fa_flight_id });
-    if (!flight) {
-      return jsonWithCors({ error: "Flight not found" }, { status: 404 });
-    }
+  const flight = await db.collection<FlightMetadata>("flights").findOne({
+    fa_flight_id,
+  });
 
-    // Update the flight status in the database
-    await db.collection("flights").updateOne(
-      { fa_flight_id },
-      {
-        $set: {
-          status: "active",
-          realtime_data: {
-            last_update: new Date(),
-            flight_status: "scheduled",
-          },
-        },
-      }
-    );
-
-    // Then notify the WebSocket server to start polling
-    const wsServerUrl = new URL("/admin/start-polling", WS_SERVER_URL);
-    wsServerUrl.searchParams.set("flightId", fa_flight_id);
-
-    const response = await fetch(wsServerUrl);
-    if (!response.ok) {
-      // If WebSocket server fails, revert the status
-      await db.collection("flights").updateOne(
-        { fa_flight_id },
-        {
-          $set: {
-            status: "scheduled",
-            $unset: { realtime_data: "" },
-          },
-        }
-      );
-      throw new Error("Failed to start polling");
-    }
-
-    return jsonWithCors({
-      message: "Tracking started successfully",
-    });
-  } catch (error) {
-    console.error("Error starting tracking:", error);
+  if (!flight) {
     return jsonWithCors(
       {
-        error: "Failed to start tracking",
+        error: "Flight not found",
       },
-      { status: 500 }
+      { status: 404 }
     );
   }
-};
 
-export const stopTracking = async (req: Request) => {
+  const data = await getFlightPosition(fa_flight_id);
+
+  if (!data.waypoints || data.waypoints.length === 0) {
+    return jsonWithCors(
+      { message: "No waypoints available for this flight" },
+      { status: 200 }
+    );
+  }
+
   try {
-    const body = (await req.json()) as { fa_flight_id: string };
-    const { fa_flight_id } = body;
-
-    // First check if the flight exists and is currently active
-    const flight = await db.collection("flights").findOne({
-      fa_flight_id,
-      status: "active",
-    });
-
-    if (!flight) {
-      return jsonWithCors(
-        { error: "Flight not found or not currently active" },
-        { status: 404 }
-      );
-    }
-
-    // Update the flight status in the database
+    // Only reaches here if we have valid waypoints
     await db.collection("flights").updateOne(
       { fa_flight_id },
       {
         $set: {
-          status: "completed",
-          "realtime_data.flight_status": "landed",
-          "realtime_data.last_update": new Date(),
+          waypoints: data.waypoints,
         },
       }
     );
 
-    // Then notify the WebSocket server to stop polling
-    const wsServerUrl = new URL("/admin/stop-polling", WS_SERVER_URL);
-    const response = await fetch(wsServerUrl);
-    if (!response.ok) {
-      // If WebSocket server fails, revert the status
-      await db.collection("flights").updateOne(
-        { fa_flight_id },
-        {
-          $set: {
-            status: "active",
-            "realtime_data.flight_status": "in_air",
-          },
-        }
-      );
-      throw new Error("Failed to stop polling");
-    }
-
     return jsonWithCors({
-      message: "Tracking stopped successfully",
+      status: "success",
+      message: "Waypoints updated successfully",
+      waypoints_count: data.waypoints.length,
     });
   } catch (error) {
-    console.error("Error stopping tracking:", error);
+    console.error("Error updating waypoints:", error);
     return jsonWithCors(
       {
-        error: "Failed to stop tracking",
+        status: "error",
+        message: "Failed to update waypoints in database",
+        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 }
     );

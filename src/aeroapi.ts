@@ -10,7 +10,7 @@ const AERO_API_BASE = "https://aeroapi.flightaware.com/aeroapi";
 
 export async function getFlightInfo(
   faFlightId: string
-): Promise<FlightInfoResponse> {
+) {
   const data = await fetch(`${AERO_API_BASE}/flights/${faFlightId}`, {
     headers: {
       "x-apikey": AERO_API_KEY!,
@@ -56,6 +56,6 @@ export async function getFlightPosition(
   });
 
   const positionData = (await data.json()) as FlightPositionResponse;
-  // return last position
+
   return positionData;
 }

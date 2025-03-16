@@ -4,41 +4,34 @@ const CORS_METHODS = "GET, POST, PUT, DELETE, OPTIONS";
 const CORS_HEADERS = "Content-Type, Authorization";
 
 /**
- * Wraps a Response with CORS headers
- * @param response The original response to wrap
- * @returns A new Response with CORS headers added
+ * Extended Response type that preserves the type of the contained data
  */
-export function withCors(response: Response): Response {
-  // Create a new response with the same body and status
-  const newResponse = new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-  });
-
-  // Copy all original headers
-  response.headers.forEach((value, key) => {
-    newResponse.headers.set(key, value);
-  });
-
-  // Add CORS headers
-  newResponse.headers.set("Access-Control-Allow-Origin", CORS_ORIGIN);
-  newResponse.headers.set("Access-Control-Allow-Methods", CORS_METHODS);
-  newResponse.headers.set("Access-Control-Allow-Headers", CORS_HEADERS);
-
-  return newResponse;
+export interface TypedResponse<T> extends Response {
+  json(): Promise<T>;
 }
 
 /**
- * Creates a JSON response with CORS headers
+ * Creates a JSON response with CORS headers while preserving type information
  * @param data The data to send in the response
  * @param options Response options (status, headers, etc.)
- * @returns A Response with CORS headers
+ * @returns A typed Response with CORS headers that preserves the data type
  */
-export function jsonWithCors(
-  data: unknown,
-  options: Bun.ResponseInit = {}
-): Response {
-  return withCors(Response.json(data, options));
+export function jsonWithCors<T>(
+  data: T,
+  options: Bun.ResponseInit | number = {}
+) {
+  // Create a JSON response with the provided data and options
+  const response = Response.json(data, options);
+
+  // Add CORS headers directly in this function
+  response.headers.set("Access-Control-Allow-Origin", CORS_ORIGIN);
+  response.headers.set("Access-Control-Allow-Methods", CORS_METHODS);
+  response.headers.set("Access-Control-Allow-Headers", CORS_HEADERS);
+
+  // Cast the response to our typed interface
+  const typedResponse = response as TypedResponse<T>;
+
+  return typedResponse;
 }
 
 /**
