@@ -16,6 +16,18 @@ export interface WebSocketEvent<T = any> {
   data: T;
 }
 
+export type FlightTrackObject = {
+  fa_flight_id: string | null;
+  altitude: number;
+  altitude_change: string;
+  groundspeed: number;
+  heading: number;
+  latitude: number;
+  longitude: number;
+  timestamp: string;
+  update_type: string;
+};
+
 export type FlightMetadata = {
   ident: string;
   ident_icao: string;
@@ -59,17 +71,7 @@ export type FlightMetadata = {
   route: string | null;
   is_tracking: boolean;
   waypoints?: string[];
-  flightTrack?: {
-    fa_flight_id: string | null;
-    altitude: number;
-    altitude_change: string;
-    groundspeed: number;
-    heading: number;
-    latitude: number;
-    longitude: number;
-    timestamp: string;
-    update_type: string;
-  }[];
+  flightTrack: FlightTrackObject[];
 };
 
 export type Stats = {
@@ -298,17 +300,7 @@ export type FlightPositionResponse = {
   };
   waypoints: string[];
   first_position_time: string;
-  last_position: {
-    fa_flight_id: string;
-    altitude: number;
-    altitude_change: string;
-    groundspeed: number;
-    heading: number;
-    latitude: number;
-    longitude: number;
-    timestamp: string;
-    update_type: string;
-  };
+  last_position: FlightTrackObject;
   bounding_box: string[];
   ident_prefix: string;
   aircraft_type: string;
@@ -326,15 +318,5 @@ export type FlightPositionResponse = {
 
 export type FlightTrackResponse = {
   actual_distance: number;
-  positions: {
-    fa_flight_id: string | null;
-    altitude: number;
-    altitude_change: string;
-    groundspeed: number;
-    heading: number;
-    latitude: number;
-    longitude: number;
-    timestamp: string;
-    update_type: string;
-  }[];
+  positions: FlightTrackObject[];
 };
