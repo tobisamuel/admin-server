@@ -1,4 +1,9 @@
-import { getAirportInfo, getFlightInfo, getFlightPosition } from "./aeroapi";
+import {
+  getAirportInfo,
+  getFlightInfo,
+  getFlightPosition,
+  getFlightTrack,
+} from "./aeroapi";
 import { jsonWithCors } from "./cors";
 import {
   type AeroApiError,
@@ -115,12 +120,17 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
     const { fa_flight_id, origin, destination } =
       (await req.json()) as FlightCreationData;
 
-    const [originAirportInfo, destinationAirportInfo, flightResponse] =
-      await Promise.all([
-        getAirportInfo(origin),
-        getAirportInfo(destination),
-        getFlightInfo(fa_flight_id),
-      ]);
+    const [
+      originAirportInfo,
+      destinationAirportInfo,
+      flightResponse,
+      flightTrack,
+    ] = await Promise.all([
+      getAirportInfo(origin),
+      getAirportInfo(destination),
+      getFlightInfo(fa_flight_id),
+      getFlightTrack(fa_flight_id),
+    ]);
 
     if (!flightResponse?.flights || flightResponse.flights.length === 0) {
       return jsonWithCors(
@@ -135,7 +145,8 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
     const flightMetadata = formatFlightData(
       flight,
       originAirportInfo,
-      destinationAirportInfo
+      destinationAirportInfo,
+      flightTrack.positions
     );
 
     await db.collection("flights").insertOne(flightMetadata);

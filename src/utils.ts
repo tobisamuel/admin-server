@@ -1,6 +1,11 @@
 import { MongoClient } from "mongodb";
 
-import type { AirportResponse, DetailedFlight, FlightMetadata } from "./types";
+import type {
+  AirportResponse,
+  DetailedFlight,
+  FlightMetadata,
+  FlightTrackResponse,
+} from "./types";
 
 let MONGODB_URI = process.env.MONGODB_URI;
 
@@ -26,7 +31,8 @@ export { db };
 export function formatFlightData(
   flight: DetailedFlight,
   originAirportInfo: AirportResponse,
-  destinationAirportInfo: AirportResponse
+  destinationAirportInfo: AirportResponse,
+  flightTrack: FlightTrackResponse["positions"]
 ): FlightMetadata {
   return {
     ident: flight.ident,
@@ -63,6 +69,7 @@ export function formatFlightData(
     actual_in: flight.actual_in,
     progress_percent: flight.progress_percent,
     status: flight.status,
+    standardized_status: standardizeFlightStatus(flight.status),
     aircraft_type: flight.aircraft_type,
     route_distance: flight.route_distance,
     filed_airspeed: flight.filed_airspeed,
@@ -70,6 +77,7 @@ export function formatFlightData(
     route: flight.route,
     is_tracking: false,
     waypoints: [],
+    flightTrack: flightTrack,
   };
 }
 
@@ -86,7 +94,7 @@ export function getCountriesVisited(flights: FlightMetadata[]) {
   // Process flights in order
   flights.forEach((flight) => {
     // Only count countries from completed flights
-    if (flight.status === "completed") {
+    if (flight.status === "Arrived / Gate Arrival") {
       // Add both origin and destination countries for all flights
       visitedCountries.add(flight.origin!.country_code);
       visitedCountries.add(flight.destination!.country_code);
@@ -95,4 +103,65 @@ export function getCountriesVisited(flights: FlightMetadata[]) {
 
   // Return array of visited countries
   return Array.from(visitedCountries);
+}
+
+/**
+ * Standardizes AeroAPI flight status into three main states: scheduled, active, or completed
+ * @param status The status string from AeroAPI response
+ * @returns A standardized status string
+ */
+export function standardizeFlightStatus(
+  status: string | null | undefined
+): "scheduled" | "active" | "completed" | "unknown" {
+  if (!status) return "unknown";
+
+  const lowerStatus = status.toLowerCase();
+
+  // Handle scheduled state - this is usually a simple "Scheduled" string
+  if (lowerStatus === "scheduled") {
+    return "scheduled";
+  }
+
+  // Handle active state - any status indicating the flight is in progress
+  // Split by "/" to handle compound statuses like "En Route / On Time"
+  const activeStatuses = [
+    "en route",
+    "in-air",
+    "in air",
+    "departed",
+    "taxi",
+    "takeoff",
+    "delayed",
+    "on time",
+    "early",
+    "late",
+    "gate departure",
+  ];
+
+  // Check if any part of the status contains an active status
+  const statusParts = lowerStatus.split("/").map((part) => part.trim());
+  if (
+    statusParts.some((part) =>
+      activeStatuses.some((active) => part.includes(active))
+    )
+  ) {
+    return "active";
+  }
+
+  // Handle completed state - any status indicating the flight has ended
+  // Split by "/" to handle compound statuses like "Arrived / Gate Arrival"
+  const completedStatuses = ["arrived", "landed", "completed", "gate arrival"];
+
+  // Check if any part of the status contains a completed status
+  if (
+    statusParts.some((part) =>
+      completedStatuses.some((completed) => part.includes(completed))
+    )
+  ) {
+    return "completed";
+  }
+
+  // Default to active if we can't determine the state
+  // This is a conservative approach since we want to ensure we don't miss tracking active flights
+  return "active";
 }

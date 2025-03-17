@@ -51,6 +51,7 @@ export type FlightMetadata = {
   actual_in: string | null;
   progress_percent: number;
   status: string;
+  standardized_status: "scheduled" | "active" | "completed" | "unknown";
   aircraft_type: string;
   route_distance: number;
   filed_airspeed: number;
@@ -276,34 +277,24 @@ export type FlightPositionResponse = {
   fa_flight_id: string;
   registration: string;
   origin: {
-    airport_code: string;
+    code: string;
     code_icao: string;
     code_iata: string;
     code_lid: string;
-    name: string;
-    type: string;
-    elevation: number;
-    city: string;
-    state: string;
-    longitude: number;
-    latitude: number;
     timezone: string;
-    country_code: string;
+    name: string;
+    city: string;
+    airport_info_url: string;
   };
   destination: {
-    airport_code: string;
+    code: string;
     code_icao: string;
     code_iata: string;
     code_lid: string;
-    name: string;
-    type: string;
-    elevation: number;
-    city: string;
-    state: string;
-    longitude: number;
-    latitude: number;
     timezone: string;
-    country_code: string;
+    name: string;
+    city: string;
+    airport_info_url: string;
   };
   waypoints: string[];
   first_position_time: string;
@@ -316,6 +307,7 @@ export type FlightPositionResponse = {
     latitude: number;
     longitude: number;
     timestamp: string;
+    update_type: string;
   };
   bounding_box: string[];
   ident_prefix: string;
@@ -346,83 +338,3 @@ export type FlightTrackResponse = {
     update_type: string;
   }[];
 };
-
-/**
- * Represents the status of a flight as returned by the FlightAware AeroAPI.
- * This type is a union of likely string literals, combined with a fallback
- * string type to handle any unexpected status values.
- */
-type FlightStatus =
-  | "Scheduled"
-  | "Delayed (Scheduled)" // Indicates a delay, but still scheduled
-  | "Cancelled"
-  | "In-Air"
-  | "En Route"
-  | "Diverted"
-  | "Delayed (In-Air)" // Indicates a delay while in the air
-  | "Approach"
-  | "Approaching" // Followed by airport name/code, e.g., "Approaching KJFK"
-  | "Final Approach"
-  | "Landed"
-  | "Arrived"
-  | "Completed"
-  | "Unknown"
-  | "Result Unknown"
-  | "Filed"
-  | string; // Fallback for any other human-readable status string
-
-/**
- * Helper function to categorize flight status for more robust handling.
- * This function maps the raw FlightStatus to a broader category.  This
- * allows your application logic to be less brittle to changes in the
- * specific wording used by FlightAware.
- *
- * @param status The raw FlightStatus string.
- * @returns A FlightStatusCategory representing the broader state of the flight.
- */
-export function getFlightStatusCategory(
-  status: FlightStatus
-): FlightStatusCategory {
-  switch (status) {
-    case "Scheduled":
-    case "Delayed (Scheduled)":
-    case "Filed":
-      return "Scheduled";
-    case "Cancelled":
-      return "Cancelled";
-    case "In-Air":
-    case "En Route":
-    case "Delayed (In-Air)":
-    case "Diverted": // Diverted is still "in-air" from a category perspective
-      return "InAir";
-    case "Approach":
-    case "Approaching":
-    case "Final Approach":
-      return "Approaching";
-    case "Landed":
-      return "Landed";
-    case "Arrived":
-    case "Completed":
-      return "Arrived";
-    case "Unknown":
-    case "Result Unknown":
-      return "Unknown";
-    default:
-      // Handle potentially unknown strings, you could log them for analysis
-      console.warn(`Unknown flight status encountered: ${status}`);
-      return "Unknown"; // Treat any unrecognized status as "Unknown"
-  }
-}
-
-/**
- * Represents a broader category of flight status, for more robust
- * programmatic handling than relying solely on the exact string value.
- */
-export type FlightStatusCategory =
-  | "Scheduled"
-  | "Cancelled"
-  | "InAir"
-  | "Approaching"
-  | "Landed"
-  | "Arrived"
-  | "Unknown";
