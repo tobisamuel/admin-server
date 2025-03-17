@@ -640,7 +640,6 @@ async function stopPolling(faFlightId: string, forceStop: boolean = false) {
       status: finalStatus,
       standardized_status: standardizedStatus,
       is_tracking: false,
-      // tracking_ended_at: new Date(),
     };
 
     // If we have final flight data from the API, update relevant fields
@@ -673,14 +672,6 @@ async function stopPolling(faFlightId: string, forceStop: boolean = false) {
       { fa_flight_id: faFlightId },
       {
         $set: updateFields,
-        // $push: {
-        //   statusHistory: {
-        //     status: finalStatus,
-        //     standardized_status: standardizedStatus,
-        //     source: forceStop ? "force_stop" : "api",
-        //     timestamp: new Date(),
-        //   } as any,
-        // },
       }
     );
 

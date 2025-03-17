@@ -115,53 +115,87 @@ export function standardizeFlightStatus(
 ): "scheduled" | "active" | "completed" | "unknown" {
   if (!status) return "unknown";
 
+  console.log(`Standardizing flight status: "${status}"`);
   const lowerStatus = status.toLowerCase();
 
-  // Handle scheduled state - this is usually a simple "Scheduled" string
-  if (lowerStatus === "scheduled") {
-    return "scheduled";
-  }
-
-  // Handle active state - any status indicating the flight is in progress
   // Split by "/" to handle compound statuses like "En Route / On Time"
+  const statusParts = lowerStatus.split("/").map((part) => part.trim());
+  console.log(`Status parts: ${JSON.stringify(statusParts)}`);
+
+  // Define status indicators with clear hierarchical preference
+  const scheduledStatuses = ["scheduled", "not departed"];
+
+  const completedStatuses = [
+    "arrived",
+    "landed",
+    "completed",
+    "gate arrival",
+    "arrival",
+  ];
+
   const activeStatuses = [
     "en route",
     "in-air",
     "in air",
     "departed",
     "taxi",
+    "taxiing",
     "takeoff",
-    "delayed",
-    "on time",
-    "early",
-    "late",
     "gate departure",
   ];
 
-  // Check if any part of the status contains an active status
-  const statusParts = lowerStatus.split("/").map((part) => part.trim());
-  if (
-    statusParts.some((part) =>
-      activeStatuses.some((active) => part.includes(active))
-    )
-  ) {
-    return "active";
+  // Modifier statuses that don't determine the flight phase on their own
+  const modifierStatuses = ["delayed", "on time", "early", "late"];
+
+  // Special case: If the status is exactly "Scheduled" (ignoring case), it's scheduled
+  if (lowerStatus === "scheduled") {
+    console.log(`Status is exactly "scheduled"`);
+    return "scheduled";
   }
 
-  // Handle completed state - any status indicating the flight has ended
-  // Split by "/" to handle compound statuses like "Arrived / Gate Arrival"
-  const completedStatuses = ["arrived", "landed", "completed", "gate arrival"];
+  // Special case: If status contains "scheduled" and a modifier like "delayed"
+  if (
+    statusParts.some((part) => scheduledStatuses.some((s) => part.includes(s)))
+  ) {
+    console.log(
+      `Status contains scheduled indicator, standardized as: "scheduled"`
+    );
+    return "scheduled";
+  }
 
-  // Check if any part of the status contains a completed status
+  // Check for completed status (highest priority)
   if (
     statusParts.some((part) =>
       completedStatuses.some((completed) => part.includes(completed))
     )
   ) {
+    console.log(
+      `Status contains completed indicator, standardized as: "completed"`
+    );
     return "completed";
   }
 
-  // Default to active if we can't determine the state
-  // This is a conservative approach since we want to ensure we don't miss tracking active flights
-  return "active";
+  // Check for active flight status
+  if (
+    statusParts.some((part) =>
+      activeStatuses.some((active) => part.includes(active))
+    )
+  ) {
+    console.log(`Status contains active indicator, standardized as: "active"`);
+    return "active";
+  }
+
+  // If only modifiers are present, we need to make a reasonable guess
+  if (
+    statusParts.some((part) => modifierStatuses.some((m) => part.includes(m)))
+  ) {
+    // For modifiers without a clear phase indicator, default to scheduled
+    // This is the most conservative approach
+    console.log(`Status contains only modifiers, defaulting to: "scheduled"`);
+    return "scheduled";
+  }
+
+  // If we can't determine the state, default to unknown
+  console.log(`Could not classify status, defaulting to: "unknown"`);
+  return "unknown";
 }
