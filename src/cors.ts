@@ -1,9 +1,6 @@
 // CORS configuration
 // Add Vercel domain to the allowed origins
-const CORS_ORIGIN =
-  process.env.NODE_ENV === "production"
-    ? "https://alma-admin-gules.vercel.app"
-    : "http://localhost:3000";
+const CORS_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:3000";
 const CORS_METHODS = "GET, POST, PUT, DELETE, OPTIONS";
 const CORS_HEADERS = "Content-Type, Authorization";
 
