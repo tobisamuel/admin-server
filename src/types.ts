@@ -3,6 +3,7 @@ export type WebSocketEventType =
   | "client_added"
   | "client_removed"
   | "initial_state"
+  | "start_flight"
   | "position_update"
   | "flight_status_update"
   | "flight_completed"
@@ -57,6 +58,17 @@ export type FlightMetadata = {
   route: string | null;
   is_tracking: boolean;
   waypoints?: string[];
+  flightTrack?: {
+    fa_flight_id: string | null;
+    altitude: number;
+    altitude_change: string;
+    groundspeed: number;
+    heading: number;
+    latitude: number;
+    longitude: number;
+    timestamp: string;
+    update_type: string;
+  }[];
 };
 
 export type Stats = {
@@ -318,6 +330,21 @@ export type FlightPositionResponse = {
   predicted_off_source: string | null;
   predicted_on_source: string | null;
   predicted_in_source: string | null;
+};
+
+export type FlightTrackResponse = {
+  actual_distance: number;
+  positions: {
+    fa_flight_id: string | null;
+    altitude: number;
+    altitude_change: string;
+    groundspeed: number;
+    heading: number;
+    latitude: number;
+    longitude: number;
+    timestamp: string;
+    update_type: string;
+  }[];
 };
 
 /**

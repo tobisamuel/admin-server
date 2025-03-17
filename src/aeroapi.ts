@@ -3,14 +3,13 @@ import {
   type FlightInfoResponse,
   type FlightPositionResponse,
   type FlightRouteResponse,
+  type FlightTrackResponse,
 } from "./types";
 
 const AERO_API_KEY = process.env.AERO_API_KEY;
 const AERO_API_BASE = "https://aeroapi.flightaware.com/aeroapi";
 
-export async function getFlightInfo(
-  faFlightId: string
-) {
+export async function getFlightInfo(faFlightId: string) {
   const data = await fetch(`${AERO_API_BASE}/flights/${faFlightId}`, {
     headers: {
       "x-apikey": AERO_API_KEY!,
@@ -58,4 +57,16 @@ export async function getFlightPosition(
   const positionData = (await data.json()) as FlightPositionResponse;
 
   return positionData;
+}
+
+export async function getFlightTrack(faFlightId: string) {
+  const data = await fetch(`${AERO_API_BASE}/flights/${faFlightId}/track`, {
+    headers: {
+      "x-apikey": AERO_API_KEY!,
+    },
+  });
+
+  const trackData = (await data.json()) as FlightTrackResponse;
+
+  return trackData;
 }

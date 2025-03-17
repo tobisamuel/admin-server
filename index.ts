@@ -1,6 +1,10 @@
 import { type ServerWebSocket, type Server } from "bun";
 
-import { getFlightPosition, getFlightInfo } from "./src/aeroapi";
+import {
+  getFlightPosition,
+  getFlightInfo,
+  getFlightTrack,
+} from "./src/aeroapi";
 import { jsonWithCors, handleCorsOptions } from "./src/cors";
 import {
   searchFlights,
@@ -125,11 +129,20 @@ async function getInitialState() {
   };
   const completedFlights = flights.filter((f) => f.status === "completed");
   const activeFlightData = flights.find((f) => f.is_tracking) || null;
+  const lastPosition =
+    activeFlightData?.flightTrack?.[activeFlightData.flightTrack.length - 1] ||
+    null;
 
   return {
     client_count: clients.size,
     active_flight: activeFlightData,
     current_location: initialLocation,
+    current_position: {
+      latitude: lastPosition?.latitude,
+      longitude: lastPosition?.longitude,
+      heading: lastPosition?.heading,
+      timestamp: lastPosition?.timestamp,
+    },
     completed_flights: completedFlights,
     stats: {
       total_miles: completedFlights.reduce(
@@ -154,17 +167,26 @@ async function startPolling(faFlightId: string) {
       throw new Error("Flight not found");
     }
 
+    const [flightData, positionData, trackData] = await Promise.all([
+      getFlightInfo(faFlightId),
+      getFlightPosition(faFlightId),
+      getFlightTrack(faFlightId),
+    ]);
+
     // Initialize flightTrack with empty array and set status to active
-    await db.collection("flights").updateOne(
-      { fa_flight_id: faFlightId },
-      {
-        $set: {
-          status: "active",
-          flightTrack: [],
-          "realtimeData.last_update": new Date(),
+    const updateFlight = await db
+      .collection<FlightMetadata>("flights")
+      .findOneAndUpdate(
+        { fa_flight_id: faFlightId },
+        {
+          $set: {
+            status: flightData?.flights?.[0]?.status,
+            is_tracking: true,
+            flightTrack: trackData.positions,
+          },
         },
-      }
-    );
+        { returnDocument: "after" }
+      );
 
     // Clear any existing polling
     if (pollingInterval) {
@@ -173,15 +195,19 @@ async function startPolling(faFlightId: string) {
 
     currentFlightId = faFlightId;
 
+    broadcastUpdate("start_flight", {
+      flight: updateFlight,
+      current_position: {
+        latitude: positionData.last_position.latitude,
+        longitude: positionData.last_position.longitude,
+        heading: positionData.last_position.heading,
+        timestamp: positionData.last_position.timestamp,
+      },
+    });
+
     // Start polling FlightAware API for comprehensive flight data
     pollingInterval = setInterval(async () => {
       try {
-        // Fetch both flight info and position data
-        const [flightData, positionData] = await Promise.all([
-          getFlightInfo(faFlightId),
-          getFlightPosition(faFlightId),
-        ]);
-
         const flight = flightData?.flights?.[0];
         if (!flight) {
           console.warn(`No flight data received for flight ${faFlightId}`);
@@ -217,36 +243,35 @@ async function startPolling(faFlightId: string) {
         const currentFlight = await db
           .collection("flights")
           .findOne({ fa_flight_id: faFlightId });
-        const currentStatus = currentFlight?.realtimeData?.flight_status;
+        const currentStatus = currentFlight?.status;
 
         // Update flight data in database
         const updateOperation: any = {
           $set: {
-            "flightInfo.waypoints": positionData.waypoints,
-            "realtimeData.last_update": new Date(),
-            "flightInfo.status": flight.status,
-            "realtimeData.flight_status": flightStatus,
-            "realtimeData.departure_delay": flight.departure_delay,
-            "realtimeData.arrival_delay": flight.arrival_delay,
+            waypoints: positionData.waypoints,
+            status: flight.status,
+            // "realtimeData.flight_status": flightStatus,
+            departure_delay: flight.departure_delay,
+            arrival_delay: flight.arrival_delay,
           },
         };
 
         // Add position update if available
-        if (newCoordinate) {
-          updateOperation.$set["realtimeData.current_position"] = newCoordinate;
-          updateOperation.$push = { flightTrack: newCoordinate };
-        }
+        // if (newCoordinate) {
+        //   updateOperation.$set["realtimeData.current_position"] = newCoordinate;
+        //   updateOperation.$push = { flightTrack: newCoordinate };
+        // }
 
-        // Add status change to history if needed
-        if (currentStatus !== flightStatus) {
-          if (!updateOperation.$push) {
-            updateOperation.$push = {};
-          }
-          updateOperation.$push.statusHistory = {
-            status: flightStatus,
-            timestamp: new Date(),
-          };
-        }
+        // // Add status change to history if needed
+        // if (currentStatus !== flightStatus) {
+        //   if (!updateOperation.$push) {
+        //     updateOperation.$push = {};
+        //   }
+        //   updateOperation.$push.statusHistory = {
+        //     status: flightStatus,
+        //     timestamp: new Date(),
+        //   };
+        // }
 
         await db
           .collection("flights")
@@ -257,7 +282,7 @@ async function startPolling(faFlightId: string) {
           broadcastUpdate("position_update", {
             flight_id: faFlightId,
             position: newCoordinate,
-            waypoints: positionData.waypoints,
+            // waypoints: positionData.waypoints,
           });
         }
 
@@ -321,8 +346,9 @@ async function stopPolling(faFlightId: string) {
       {
         $set: {
           status: "completed",
-          "realtimeData.last_update": new Date(),
-          "realtimeData.flight_status": "landed",
+          is_tracking: false,
+          // "realtimeData.last_update": new Date(),
+          // "realtimeData.flight_status": "landed",
         },
         $push: {
           statusHistory: {
