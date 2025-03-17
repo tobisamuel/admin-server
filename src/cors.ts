@@ -1,5 +1,7 @@
 // CORS configuration
-const CORS_ORIGIN = "http://localhost:3000";
+// Add Vercel domain to the allowed origins
+const CORS_ORIGIN =
+  "http://localhost:3000, https://alma-admin-gules.vercel.app";
 const CORS_METHODS = "GET, POST, PUT, DELETE, OPTIONS";
 const CORS_HEADERS = "Content-Type, Authorization";
 
