@@ -31,14 +31,14 @@ let currentFlightId: string | null = null;
 process.once("SIGTERM", async () => {
   console.log("SIGTERM received, cleaning up flight tracking");
   if (currentFlightId) {
-    await stopPolling(currentFlightId);
+    await stopPolling(currentFlightId, true);
   }
 });
 
 process.once("SIGINT", async () => {
   console.log("SIGINT received, cleaning up flight tracking");
   if (currentFlightId) {
-    await stopPolling(currentFlightId);
+    await stopPolling(currentFlightId, true);
   }
 });
 
@@ -556,7 +556,7 @@ async function handleStopTracking(req: Request): Promise<Response> {
       return jsonWithCors({ error: "Missing flight ID" }, { status: 400 });
     }
 
-    const success = await stopPolling(body.fa_flight_id);
+    const success = await stopPolling(body.fa_flight_id, true);
 
     if (success) {
       return jsonWithCors({ message: "Tracking stopped successfully" });
@@ -571,7 +571,7 @@ async function handleStopTracking(req: Request): Promise<Response> {
   }
 }
 
-async function stopPolling(faFlightId: string) {
+async function stopPolling(faFlightId: string, forceStop: boolean = false) {
   try {
     console.log(`Stopping polling for flight ${faFlightId}`);
 
@@ -599,21 +599,88 @@ async function stopPolling(faFlightId: string) {
       throw new Error("Flight not found");
     }
 
-    // Update flight status to completed and set is_tracking to false
-    console.log(`Updating flight ${faFlightId} status to completed`);
+    // Get the latest flight status from the API
+    console.log(`Fetching final flight data from API for ${faFlightId}`);
+    let finalStatus = "completed"; // Default fallback status
+    let finalFlightData = null;
+
+    try {
+      finalFlightData = await getFlightInfo(faFlightId);
+
+      if (finalFlightData?.flights?.[0]) {
+        const apiStatus = finalFlightData.flights[0].status;
+        console.log(`API reports flight status as: ${apiStatus}`);
+
+        // Determine the appropriate status based on API response and force flag
+        if (forceStop) {
+          console.log(
+            `Force stop requested, marking as completed regardless of API status`
+          );
+          finalStatus = "completed";
+        } else if (apiStatus) {
+          finalStatus = apiStatus;
+          console.log(`Using API status: ${finalStatus}`);
+        }
+      } else {
+        console.log(
+          `No flight status available from API, using default: ${finalStatus}`
+        );
+      }
+    } catch (error) {
+      console.error(`Error fetching final flight status from API: ${error}`);
+      console.log(`Using default status: ${finalStatus}`);
+    }
+
+    // Standardize the status
+    const standardizedStatus = standardizeFlightStatus(finalStatus);
+
+    // Update flight status and set is_tracking to false with all relevant data
+    console.log(`Updating flight ${faFlightId} status to ${finalStatus}`);
+    const updateFields: any = {
+      status: finalStatus,
+      standardized_status: standardizedStatus,
+      is_tracking: false,
+      // tracking_ended_at: new Date(),
+    };
+
+    // If we have final flight data from the API, update relevant fields
+    if (finalFlightData?.flights?.[0]) {
+      const apiFlightData = finalFlightData.flights[0];
+
+      // Only update these fields if they're provided in the API response
+      if (apiFlightData?.actual_off)
+        updateFields.actual_off = apiFlightData.actual_off;
+      if (apiFlightData?.actual_on)
+        updateFields.actual_on = apiFlightData.actual_on;
+      if (apiFlightData?.actual_in)
+        updateFields.actual_in = apiFlightData.actual_in;
+      if (apiFlightData?.actual_out)
+        updateFields.actual_out = apiFlightData.actual_out;
+      if (apiFlightData?.arrival_delay)
+        updateFields.arrival_delay = apiFlightData.arrival_delay;
+      if (apiFlightData?.departure_delay)
+        updateFields.departure_delay = apiFlightData.departure_delay;
+      if (apiFlightData?.diverted !== undefined)
+        updateFields.diverted = apiFlightData.diverted;
+      if (apiFlightData?.cancelled !== undefined)
+        updateFields.cancelled = apiFlightData.cancelled;
+      if (apiFlightData?.progress_percent !== undefined)
+        updateFields.progress_percent = apiFlightData.progress_percent;
+    }
+
+    // Perform the update
     await db.collection("flights").updateOne(
       { fa_flight_id: faFlightId },
       {
-        $set: {
-          status: "completed",
-          is_tracking: false,
-        },
-        $push: {
-          statusHistory: {
-            status: "completed",
-            timestamp: new Date(),
-          },
-        } as any,
+        $set: updateFields,
+        // $push: {
+        //   statusHistory: {
+        //     status: finalStatus,
+        //     standardized_status: standardizedStatus,
+        //     source: forceStop ? "force_stop" : "api",
+        //     timestamp: new Date(),
+        //   } as any,
+        // },
       }
     );
 
@@ -621,7 +688,10 @@ async function stopPolling(faFlightId: string) {
     console.log(`Broadcasting flight completion for flight ${faFlightId}`);
     broadcastUpdate("flight_completed", {
       fa_flight_id: faFlightId,
+      status: finalStatus,
+      standardized_status: standardizedStatus,
       completion_time: new Date().toISOString(),
+      forced: forceStop,
     });
 
     return true;
