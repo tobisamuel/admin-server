@@ -186,7 +186,7 @@ async function getInitialState() {
   const lastPosition =
     activeFlightData?.flightTrack?.[activeFlightData.flightTrack.length - 1] ||
     null;
-  // get the last completed flight
+  const firstScheduledFlight = flights[0];
   const lastCompletedFlight = completedFlights[completedFlights.length - 1];
 
   return {
@@ -199,6 +199,14 @@ async function getInitialState() {
           longitude: lastCompletedFlight.destination.longitude,
           heading: 0,
           timestamp: lastCompletedFlight.actual_on,
+        }
+      : firstScheduledFlight
+      ? {
+          country: firstScheduledFlight.origin.country_code,
+          latitude: firstScheduledFlight.origin.latitude,
+          longitude: firstScheduledFlight.origin.longitude,
+          heading: 0,
+          timestamp: firstScheduledFlight.scheduled_off,
         }
       : null,
     current_position: lastPosition
@@ -472,6 +480,32 @@ async function handleStartTracking(req: Request): Promise<Response> {
         getFlightInfo(faFlightId),
         getFlightPosition(faFlightId),
       ]);
+
+      // Check if flight has started yet
+      if (!positionData.last_position || !positionData.first_position_time) {
+        logger.info(
+          {
+            flightId: faFlightId,
+            hasLastPosition: !!positionData.last_position,
+            hasFirstPositionTime: !!positionData.first_position_time,
+            origin: positionData.origin,
+            destination: positionData.destination,
+            aircraft_type: positionData.aircraft_type,
+          },
+          "Flight has not started yet"
+        );
+        return jsonWithCors(
+          {
+            error: "Flight has not started yet",
+            details: {
+              scheduled_origin: positionData.origin,
+              scheduled_destination: positionData.destination,
+              aircraft_type: positionData.aircraft_type,
+            },
+          },
+          { status: 400 }
+        );
+      }
 
       // Determine if we need historical track data
       const currentTime = new Date();
