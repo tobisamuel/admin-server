@@ -5,13 +5,7 @@ export type WebSocketEventType =
   | "initial_state"
   | "start_flight"
   | "position_update"
-  | "flight_status_update"
-  | "flight_completed"
-  | "manual_update"
-  | "flight_added"
-  | "global_stats_update"
-  | "ping"
-  | "pong";
+  | "flight_completed";
 
 export interface WebSocketEvent<T = any> {
   event: WebSocketEventType;

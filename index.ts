@@ -831,23 +831,19 @@ async function stopPolling(
     }
 
     // Perform the update
-    await db.collection("flights").updateOne(
-      { fa_flight_id: faFlightId },
-      {
-        $set: updateFields,
-      }
-    );
+    const updatedFlight = await db
+      .collection<FlightMetadata>("flights")
+      .findOneAndUpdate(
+        { fa_flight_id: faFlightId },
+        {
+          $set: updateFields,
+        },
+        { returnDocument: "after" }
+      );
 
     // Broadcast final update
     logger.info({ faFlightId }, "Broadcasting flight completion");
-    broadcastUpdate("flight_completed", {
-      fa_flight_id: faFlightId,
-      status: finalStatus,
-      standardized_status: standardizedStatus,
-      completion_time: new Date().toISOString(),
-      forced: false,
-      reason: trackingEndedReason,
-    });
+    broadcastUpdate("flight_completed", updatedFlight);
 
     return true;
   } catch (error) {
