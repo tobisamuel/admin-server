@@ -3,6 +3,9 @@
 FROM oven/bun:alpine AS base
 WORKDIR /usr/src/app
 
+# Add build argument for NODE_ENV
+ARG NODE_ENV=development
+
 # Install dependencies into temp directory
 # This will cache them and speed up future builds
 FROM base AS install
@@ -21,8 +24,8 @@ FROM base AS prerelease
 COPY --from=install /temp/dev/node_modules node_modules
 COPY . .
 
-# Set production environment
-ENV NODE_ENV=production
+# Set environment
+ENV NODE_ENV=${NODE_ENV}
 
 # Copy production dependencies and source code into final image
 FROM base AS release
@@ -31,6 +34,9 @@ COPY --from=prerelease /usr/src/app/index.ts .
 COPY --from=prerelease /usr/src/app/src ./src
 COPY --from=prerelease /usr/src/app/tsconfig.json .
 COPY --from=prerelease /usr/src/app/package.json .
+
+# Set environment
+ENV NODE_ENV=${NODE_ENV}
 
 # Run the app
 USER bun

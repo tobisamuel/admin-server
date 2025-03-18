@@ -2,7 +2,10 @@ import pino from "pino";
 
 // Configure the logger with custom settings
 const logger = pino({
+  // Default to info level, but allow override via environment variable
   level: process.env.LOG_LEVEL || "info",
+
+  // Enable pretty printing in development
   transport:
     process.env.NODE_ENV === "development"
       ? {
@@ -14,16 +17,47 @@ const logger = pino({
           },
         }
       : undefined,
+
+  // Ensure consistent formatting of levels
   formatters: {
     level: (label) => {
       return { level: label.toUpperCase() };
     },
+    // Add bindings to all log records
+    bindings: (bindings) => {
+      return {
+        pid: bindings.pid,
+        hostname: bindings.hostname,
+        node_version: process.version,
+      };
+    },
   },
+
+  // Add base metadata to all logs
   base: {
     env: process.env.NODE_ENV || "development",
     version: process.env.npm_package_version,
+    service: "admin-server",
   },
-  timestamp: pino.stdTimeFunctions.isoTime,
+
+  // Use high-resolution timestamps
+  timestamp: () => `,"time":${Date.now()}`,
+
+  // Enable message key for better readability in JSON
+  messageKey: "msg",
+
+  // Redact sensitive information
+  redact: {
+    paths: [
+      "*.password",
+      "*.token",
+      "*.key",
+      "*.secret",
+      "*.cookie",
+      "*.auth*",
+    ],
+    remove: true,
+  },
 });
 
 export default logger;

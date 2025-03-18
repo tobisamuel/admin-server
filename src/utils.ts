@@ -116,86 +116,46 @@ export function standardizeFlightStatus(
   if (!status) return "unknown";
 
   console.log(`Standardizing flight status: "${status}"`);
-  const lowerStatus = status.toLowerCase();
 
-  // Split by "/" to handle compound statuses like "En Route / On Time"
-  const statusParts = lowerStatus.split("/").map((part) => part.trim());
-  console.log(`Status parts: ${JSON.stringify(statusParts)}`);
+  // Get the primary status (before the "/"), defaulting to the entire string if no "/" is found
+  const primaryStatus =
+    status.split("/")[0]?.trim().toLowerCase() || status.trim().toLowerCase();
+  console.log(`Primary status: "${primaryStatus}"`);
 
-  // Define status indicators with clear hierarchical preference
-  const scheduledStatuses = ["scheduled", "not departed"];
+  // Define status mappings with clear hierarchical preference
+  const statusMap = {
+    // Completed states
+    arrived: "completed",
+    landed: "completed",
+    completed: "completed",
 
-  const completedStatuses = [
-    "arrived",
-    "landed",
-    "completed",
-    "gate arrival",
-    "arrival",
-  ];
+    // Active states
+    "en route": "active",
+    "in-air": "active",
+    "in air": "active",
+    departed: "active",
+    taxi: "active",
+    taxiing: "active",
+    takeoff: "active",
 
-  const activeStatuses = [
-    "en route",
-    "in-air",
-    "in air",
-    "departed",
-    "taxi",
-    "taxiing",
-    "takeoff",
-    "gate departure",
-  ];
+    // Scheduled states
+    scheduled: "scheduled",
+    "not departed": "scheduled",
+  } as const;
 
-  // Modifier statuses that don't determine the flight phase on their own
-  const modifierStatuses = ["delayed", "on time", "early", "late"];
+  // Look up the status in our map
+  const standardizedStatus = statusMap[primaryStatus as keyof typeof statusMap];
 
-  // Special case: If the status is exactly "Scheduled" (ignoring case), it's scheduled
-  if (lowerStatus === "scheduled") {
-    console.log(`Status is exactly "scheduled"`);
-    return "scheduled";
-  }
-
-  // Special case: If status contains "scheduled" and a modifier like "delayed"
-  if (
-    statusParts.some((part) => scheduledStatuses.some((s) => part.includes(s)))
-  ) {
+  if (standardizedStatus) {
     console.log(
-      `Status contains scheduled indicator, standardized as: "scheduled"`
+      `Mapped primary status "${primaryStatus}" to "${standardizedStatus}"`
     );
-    return "scheduled";
+    return standardizedStatus;
   }
 
-  // Check for completed status (highest priority)
-  if (
-    statusParts.some((part) =>
-      completedStatuses.some((completed) => part.includes(completed))
-    )
-  ) {
-    console.log(
-      `Status contains completed indicator, standardized as: "completed"`
-    );
-    return "completed";
-  }
-
-  // Check for active flight status
-  if (
-    statusParts.some((part) =>
-      activeStatuses.some((active) => part.includes(active))
-    )
-  ) {
-    console.log(`Status contains active indicator, standardized as: "active"`);
-    return "active";
-  }
-
-  // If only modifiers are present, we need to make a reasonable guess
-  if (
-    statusParts.some((part) => modifierStatuses.some((m) => part.includes(m)))
-  ) {
-    // For modifiers without a clear phase indicator, default to scheduled
-    // This is the most conservative approach
-    console.log(`Status contains only modifiers, defaulting to: "scheduled"`);
-    return "scheduled";
-  }
-
-  // If we can't determine the state, default to unknown
-  console.log(`Could not classify status, defaulting to: "unknown"`);
+  // If we can't determine the state, log it and return unknown
+  console.log(
+    `Could not classify primary status "${primaryStatus}", defaulting to: "unknown"`
+  );
   return "unknown";
 }
