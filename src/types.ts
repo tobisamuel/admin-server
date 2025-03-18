@@ -9,7 +9,9 @@ export type WebSocketEventType =
   | "flight_completed"
   | "manual_update"
   | "flight_added"
-  | "global_stats_update";
+  | "global_stats_update"
+  | "ping"
+  | "pong";
 
 export interface WebSocketEvent<T = any> {
   event: WebSocketEventType;

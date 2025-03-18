@@ -14,6 +14,7 @@ import {
   type FlightMetadata,
 } from "./types";
 import { db, formatFlightData } from "./utils";
+import logger from "./logger";
 
 type Headers = Record<string, string>;
 
@@ -24,6 +25,11 @@ export const searchFlights = async (req: Request) => {
   try {
     const { startDate, endDate, origin, destination, airline, flightNumber } =
       (await req.json()) as FlightSearchParams;
+
+    logger.info(
+      { startDate, endDate, origin, destination, airline, flightNumber },
+      "Searching flights"
+    );
 
     // If we have a flight number, use the direct flight endpoint
     if (flightNumber) {
@@ -41,7 +47,10 @@ export const searchFlights = async (req: Request) => {
 
       if (!response.ok) {
         const errorData = (await response.json()) as AeroApiError;
-
+        logger.error(
+          { error: errorData, status: response.status },
+          "Failed to search flights by number"
+        );
         return jsonWithCors(
           {
             error: errorData.detail || "Failed to search flights",
@@ -53,6 +62,7 @@ export const searchFlights = async (req: Request) => {
       }
 
       const data = (await response.json()) as DirectFlightResponse;
+      logger.info({ count: data.flights.length }, "Found flights by number");
 
       return jsonWithCors<{ flights: DirectFlightResponse["flights"] }>({
         flights: data.flights,
@@ -61,6 +71,10 @@ export const searchFlights = async (req: Request) => {
 
     // Otherwise, use the schedules endpoint
     if (!startDate || !endDate) {
+      logger.warn(
+        { startDate, endDate },
+        "Missing required dates for schedule search"
+      );
       return jsonWithCors(
         {
           error: "startDate and endDate are required for schedule searches",
@@ -68,8 +82,6 @@ export const searchFlights = async (req: Request) => {
         { status: 400 }
       );
     }
-
-    console.log("using schedules endpoint");
 
     const params = new URLSearchParams();
     if (origin) params.set("origin", origin);
@@ -86,6 +98,10 @@ export const searchFlights = async (req: Request) => {
 
     if (!response.ok) {
       const errorData = (await response.json()) as AeroApiError;
+      logger.error(
+        { error: errorData, status: response.status },
+        "Failed to search flights by schedule"
+      );
       return jsonWithCors(
         {
           error: errorData.detail || "Failed to search flights",
@@ -97,6 +113,7 @@ export const searchFlights = async (req: Request) => {
     }
 
     const data = (await response.json()) as FlightSearchResponse;
+    logger.info({ count: data.scheduled.length }, "Found flights by schedule");
 
     return jsonWithCors<{
       flights: FlightSearchResponse["scheduled"];
@@ -104,8 +121,7 @@ export const searchFlights = async (req: Request) => {
       flights: data.scheduled,
     });
   } catch (error) {
-    console.error("Error searching flights:", error);
-
+    logger.error({ err: error }, "Error searching flights");
     return jsonWithCors(
       {
         error: "Failed to search flights",
@@ -120,6 +136,26 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
     const { fa_flight_id, origin, destination } =
       (await req.json()) as FlightCreationData;
 
+    logger.info(
+      { fa_flight_id, origin, destination },
+      "Generating flight metadata"
+    );
+
+    // Check for existing flight
+    const existingFlight = await db
+      .collection<FlightMetadata>("flights")
+      .findOne({ fa_flight_id });
+
+    if (existingFlight) {
+      logger.info({ fa_flight_id }, "Flight already exists in database");
+      return jsonWithCors(
+        {
+          error: "Flight already exists in database",
+        },
+        { status: 409 }
+      );
+    }
+
     const [
       originAirportInfo,
       destinationAirportInfo,
@@ -133,11 +169,12 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
     ]);
 
     if (!flightResponse?.flights || flightResponse.flights.length === 0) {
+      logger.warn({ fa_flight_id }, "Flight information not found in AeroAPI");
       return jsonWithCors(
         {
           error: "Flight information not found for the provided fa_flight_id",
         },
-        { status: 404 } // Return a 404 Not Found status
+        { status: 404 }
       );
     }
 
@@ -151,11 +188,16 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
 
     await db.collection("flights").insertOne(flightMetadata);
 
+    logger.info(
+      { fa_flight_id },
+      "Flight metadata generated and saved successfully"
+    );
+
     return jsonWithCors({
       message: "Flight metadata generated and saved",
     });
   } catch (error) {
-    console.error("Error generating flight metadata:", error);
+    logger.error({ err: error }, "Error generating flight metadata");
 
     return jsonWithCors(
       {
@@ -176,11 +218,65 @@ export const getSavedFlights = async (req: Request) => {
 };
 
 export const deleteFlight = async (req: Request) => {
-  const { id } = (await req.json()) as { id: string };
+  try {
+    const { id } = (await req.json()) as { id: string };
 
-  await db.collection("flights").deleteOne({ fa_flight_id: id });
+    logger.info({ fa_flight_id: id }, "Attempting to delete flight");
 
-  return jsonWithCors({ message: "Flight deleted" });
+    // Check if flight exists and is not being tracked
+    const flight = await db
+      .collection<FlightMetadata>("flights")
+      .findOne({ fa_flight_id: id });
+
+    if (!flight) {
+      logger.warn({ fa_flight_id: id }, "Flight not found for deletion");
+      return jsonWithCors(
+        {
+          error: "Flight not found",
+        },
+        { status: 404 }
+      );
+    }
+
+    if (flight.is_tracking) {
+      logger.warn(
+        { fa_flight_id: id },
+        "Cannot delete flight that is currently being tracked"
+      );
+      return jsonWithCors(
+        {
+          error: "Cannot delete flight that is currently being tracked",
+        },
+        { status: 400 }
+      );
+    }
+
+    const result = await db
+      .collection("flights")
+      .deleteOne({ fa_flight_id: id });
+
+    if (result.deletedCount === 0) {
+      logger.error({ fa_flight_id: id }, "Failed to delete flight");
+      return jsonWithCors(
+        {
+          error: "Failed to delete flight",
+        },
+        { status: 500 }
+      );
+    }
+
+    logger.info({ fa_flight_id: id }, "Flight deleted successfully");
+
+    return jsonWithCors({ message: "Flight deleted" });
+  } catch (error) {
+    logger.error({ err: error }, "Error deleting flight");
+    return jsonWithCors(
+      {
+        error: "Failed to delete flight",
+      },
+      { status: 500 }
+    );
+  }
 };
 
 export const updateWaypoints = async (req: Request) => {
