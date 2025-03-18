@@ -157,19 +157,6 @@ restoreTrackingState().catch((error) => {
   logger.error({ err: error }, "Failed to restore tracking state");
 });
 
-// Simplified cleanup function
-function cleanupStaleConnections() {
-  for (const ws of clientConnections) {
-    if (ws.readyState !== WebSocket.OPEN) {
-      logger.info(
-        { readyState: ws.readyState },
-        "Cleaning up stale connection"
-      );
-      clientConnections.delete(ws);
-    }
-  }
-}
-
 // Simplified broadcast function
 function broadcastUpdate<T>(event: WebSocketEventType, data: T) {
   const update: WebSocketEvent<T> = { event, data };
@@ -728,29 +715,6 @@ async function restoreTrackingState() {
   }
 }
 
-async function handleStopTracking(req: Request): Promise<Response> {
-  try {
-    const body = (await req.json()) as { fa_flight_id: string };
-
-    if (!body.fa_flight_id) {
-      return jsonWithCors({ error: "Missing flight ID" }, { status: 400 });
-    }
-
-    const success = await stopPolling(body.fa_flight_id, true);
-
-    if (success) {
-      return jsonWithCors({ message: "Tracking stopped successfully" });
-    } else {
-      return jsonWithCors(
-        { error: "Failed to stop tracking" },
-        { status: 500 }
-      );
-    }
-  } catch (error) {
-    return jsonWithCors({ error: "Failed to stop tracking" }, { status: 500 });
-  }
-}
-
 async function stopPolling(
   faFlightId: string,
   serverShutdown: boolean = false
@@ -889,5 +853,28 @@ async function stopPolling(
   } catch (error) {
     logger.error({ err: error, faFlightId }, "Error stopping flight tracking");
     return false;
+  }
+}
+
+async function handleStopTracking(req: Request): Promise<Response> {
+  try {
+    const body = (await req.json()) as { fa_flight_id: string };
+
+    if (!body.fa_flight_id) {
+      return jsonWithCors({ error: "Missing flight ID" }, { status: 400 });
+    }
+
+    const success = await stopPolling(body.fa_flight_id, true);
+
+    if (success) {
+      return jsonWithCors({ message: "Tracking stopped successfully" });
+    } else {
+      return jsonWithCors(
+        { error: "Failed to stop tracking" },
+        { status: 500 }
+      );
+    }
+  } catch (error) {
+    return jsonWithCors({ error: "Failed to stop tracking" }, { status: 500 });
   }
 }
