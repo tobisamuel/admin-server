@@ -26,14 +26,9 @@ import { getCountriesVisited, db, standardizeFlightStatus } from "./src/utils";
 
 // Simplified connection tracking
 const clientConnections = new Set<ServerWebSocket>();
-const CLEANUP_INTERVAL = 30000; // 30 seconds
 
 // Start cleanup interval
-const cleanupInterval = setInterval(cleanupStaleConnections, CLEANUP_INTERVAL);
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
-
-// Add at the top with other state variables
-let isShuttingDown = false;
 
 const server = Bun.serve({
   port: process.env.PORT || 3001,
@@ -337,7 +332,6 @@ async function startPolling(
   // Variables for retry mechanism
   let consecutiveErrors = 0;
   const MAX_CONSECUTIVE_ERRORS = 5;
-  const RETRY_DELAY_BASE = 5000;
 
   // Start polling FlightAware API for position updates only
   pollingInterval = setInterval(async () => {
@@ -897,65 +891,3 @@ async function stopPolling(
     return false;
   }
 }
-
-// Simplified cleanup server resources
-async function cleanupServerResources() {
-  if (isShuttingDown) {
-    logger.info("Cleanup already in progress, skipping");
-    return;
-  }
-
-  isShuttingDown = true;
-  logger.info("Starting server cleanup...");
-
-  try {
-    // Clear cleanup interval
-    if (cleanupInterval) {
-      clearInterval(cleanupInterval);
-    }
-
-    // Clear any active polling intervals
-    if (pollingInterval) {
-      clearInterval(pollingInterval);
-      pollingInterval = null;
-    }
-
-    // Close all WebSocket connections gracefully
-    for (const ws of clientConnections) {
-      try {
-        logger.info(
-          { readyState: ws.readyState },
-          "Closing WebSocket connection during cleanup"
-        );
-        ws.close();
-      } catch (error) {
-        logger.error({ err: error }, "Error closing WebSocket connection");
-      }
-    }
-
-    // Clear all connections
-    clientConnections.clear();
-
-    logger.info(
-      {
-        timestamp: new Date().toISOString(),
-      },
-      "Server resources cleaned up successfully"
-    );
-  } catch (error) {
-    logger.error({ err: error }, "Error during server cleanup");
-  } finally {
-    isShuttingDown = false;
-  }
-}
-
-// Simple shutdown handler
-process.once("SIGTERM", async () => {
-  logger.warn("SIGTERM received, performing graceful shutdown");
-  await cleanupServerResources();
-});
-
-process.once("SIGINT", async () => {
-  logger.warn("SIGINT received, performing graceful shutdown");
-  await cleanupServerResources();
-});
