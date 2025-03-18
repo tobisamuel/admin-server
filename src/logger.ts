@@ -50,19 +50,6 @@ const logger = pino({
 
   // Enable message key for better readability in JSON
   messageKey: "msg",
-
-  // Redact sensitive information
-  redact: {
-    paths: [
-      "*.password",
-      "*.token",
-      "*.key",
-      "*.secret",
-      "*.cookie",
-      "*.auth*",
-    ],
-    remove: true,
-  },
 });
 
 export default logger;
