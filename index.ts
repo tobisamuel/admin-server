@@ -24,8 +24,23 @@ import {
 } from "./src/types";
 import { getCountriesVisited, db, standardizeFlightStatus } from "./src/utils";
 
-const clients = new Set<ServerWebSocket>();
+// Connection tracking
+interface ClientConnection {
+  connected: boolean;
+  lastPing: number;
+  clientId: string;
+}
+
+const clientConnections = new Map<ServerWebSocket, ClientConnection>();
+const PING_TIMEOUT = 60000; // 1 minute
+const CLEANUP_INTERVAL = 30000; // 30 seconds
+
+// Start cleanup interval
+const cleanupInterval = setInterval(cleanupStaleConnections, CLEANUP_INTERVAL);
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
+
+// Add at the top with other state variables
+let isShuttingDown = false;
 
 const server = Bun.serve({
   port: process.env.PORT || 3001,
@@ -77,46 +92,93 @@ const server = Bun.serve({
   },
   websocket: {
     open(ws: ServerWebSocket) {
-      clients.add(ws);
+      const clientId = generateClientId();
+      clientConnections.set(ws, {
+        connected: true,
+        lastPing: Date.now(),
+        clientId,
+      });
+
       ws.subscribe("flight-updates");
+
+      logger.info(
+        {
+          clientId,
+          clientCount: clientConnections.size,
+          timestamp: new Date().toISOString(),
+          readyState: ws.readyState,
+        },
+        "New WebSocket connection"
+      );
 
       // Send initial state to the new client
       getInitialState().then((state) => {
-        ws.send(
-          JSON.stringify({
-            event: "initial_state",
-            data: state,
-          })
-        );
+        if (clientConnections.has(ws) && clientConnections.get(ws)?.connected) {
+          ws.send(
+            JSON.stringify({
+              event: "initial_state",
+              data: state,
+            })
+          );
+        }
       });
 
       // Broadcast updated client count to all clients
-      broadcastUpdate("client_added", clients.size);
+      broadcastUpdate("client_added", clientConnections.size);
     },
 
     message(ws: ServerWebSocket, message: string | Buffer) {
       try {
         const data = JSON.parse(message.toString());
+        const connection = clientConnections.get(ws);
 
         // Handle ping messages
         if (data.event === "ping") {
+          if (connection) {
+            connection.lastPing = Date.now();
+            connection.connected = true;
+          }
           ws.send(JSON.stringify({ event: "pong" }));
           return;
         }
 
-        logger.debug({ message: data }, "Received WebSocket message");
+        logger.debug(
+          {
+            clientId: connection?.clientId,
+            event: data.event,
+            message: data,
+          },
+          "Received WebSocket message"
+        );
       } catch (error) {
         logger.error(
-          { err: error, message: message.toString() },
+          {
+            err: error,
+            message: message.toString(),
+            clientId: clientConnections.get(ws)?.clientId,
+          },
           "Failed to parse WebSocket message"
         );
       }
     },
 
     close(ws: ServerWebSocket) {
-      clients.delete(ws);
+      const connection = clientConnections.get(ws);
+      if (connection) {
+        logger.info(
+          {
+            clientId: connection.clientId,
+            clientCount: clientConnections.size - 1,
+            timestamp: new Date().toISOString(),
+            readyState: ws.readyState,
+          },
+          "WebSocket connection closed"
+        );
+      }
+
+      clientConnections.delete(ws);
       ws.unsubscribe("flight-updates");
-      broadcastUpdate("client_removed", clients.size);
+      broadcastUpdate("client_removed", clientConnections.size);
     },
   },
 });
@@ -131,20 +193,92 @@ restoreTrackingState().catch((error) => {
   logger.error({ err: error }, "Failed to restore tracking state");
 });
 
+// Generate a unique client ID
+function generateClientId(): string {
+  return Math.random().toString(36).substring(2, 15);
+}
+
+// Cleanup stale connections
+function cleanupStaleConnections() {
+  const now = Date.now();
+  let cleanedCount = 0;
+
+  for (const [ws, data] of clientConnections.entries()) {
+    if (now - data.lastPing > PING_TIMEOUT) {
+      logger.info(
+        {
+          clientId: data.clientId,
+          lastPing: new Date(data.lastPing).toISOString(),
+        },
+        "Cleaning up stale connection"
+      );
+      ws.close();
+      clientConnections.delete(ws);
+      cleanedCount++;
+    }
+  }
+
+  if (cleanedCount > 0) {
+    logger.info(
+      { cleanedCount, remainingConnections: clientConnections.size },
+      "Cleaned up stale connections"
+    );
+  }
+}
+
 function broadcastUpdate<T>(event: WebSocketEventType, data: T) {
   const update: WebSocketEvent<T> = { event, data };
   const message = JSON.stringify(update);
+  let successCount = 0;
+  let failureCount = 0;
 
-  for (const client of clients) {
+  for (const [ws, connection] of clientConnections.entries()) {
     try {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
+      if (connection.connected && ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+        successCount++;
+      } else {
+        logger.warn(
+          {
+            clientId: connection.clientId,
+            connected: connection.connected,
+            readyState: ws.readyState,
+            event,
+          },
+          "Skipping broadcast to inactive connection"
+        );
+        failureCount++;
       }
     } catch (error) {
-      logger.error({ err: error, event }, "Failed to broadcast message");
-      // Remove failed client
-      client.close();
+      logger.error(
+        {
+          err: error,
+          event,
+          clientId: connection.clientId,
+          clientCount: clientConnections.size,
+        },
+        "Failed to broadcast message"
+      );
+      failureCount++;
+      // Mark connection as disconnected
+      connection.connected = false;
     }
+  }
+
+  // Log broadcast statistics
+  if (successCount > 0 || failureCount > 0) {
+    logger.info(
+      {
+        event,
+        successCount,
+        failureCount,
+        totalConnections: clientConnections.size,
+        activeConnections: Array.from(clientConnections.values()).filter(
+          (c) => c.connected
+        ).length,
+      },
+      "Broadcast completed"
+    );
   }
 }
 
@@ -165,7 +299,7 @@ async function getInitialState() {
   const lastCompletedFlight = completedFlights[completedFlights.length - 1];
 
   return {
-    client_count: clients.size,
+    client_count: clientConnections.size,
     active_flight: activeFlightData,
     current_location: lastCompletedFlight
       ? {
@@ -857,28 +991,67 @@ async function stopPolling(
 
 // Function to cleanup server resources without affecting tracking state
 async function cleanupServerResources() {
-  logger.info("Cleaning up server resources...");
-
-  // Clear any active polling intervals
-  if (pollingInterval) {
-    clearInterval(pollingInterval);
-    pollingInterval = null;
+  if (isShuttingDown) {
+    logger.info("Cleanup already in progress, skipping");
+    return;
   }
 
-  // Close all WebSocket connections gracefully
-  for (const client of clients) {
-    try {
-      client.close();
-    } catch (error) {
-      logger.error({ err: error }, "Error closing WebSocket connection");
+  isShuttingDown = true;
+  logger.info("Starting server cleanup...");
+
+  try {
+    // Clear cleanup interval
+    if (cleanupInterval) {
+      clearInterval(cleanupInterval);
     }
-  }
-  clients.clear();
 
-  logger.info("Server resources cleaned up");
+    // Clear any active polling intervals
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      pollingInterval = null;
+    }
+
+    // Close all WebSocket connections gracefully
+    for (const [ws, connection] of clientConnections.entries()) {
+      try {
+        logger.info(
+          {
+            clientId: connection.clientId,
+            connected: connection.connected,
+            readyState: ws.readyState,
+          },
+          "Closing WebSocket connection during cleanup"
+        );
+        ws.close();
+      } catch (error) {
+        logger.error(
+          {
+            err: error,
+            clientId: connection.clientId,
+          },
+          "Error closing WebSocket connection"
+        );
+      }
+    }
+
+    // Clear all collections
+    clientConnections.clear();
+
+    logger.info(
+      {
+        closedConnections: clientConnections.size,
+        timestamp: new Date().toISOString(),
+      },
+      "Server resources cleaned up successfully"
+    );
+  } catch (error) {
+    logger.error({ err: error }, "Error during server cleanup");
+  } finally {
+    isShuttingDown = false;
+  }
 }
 
-// Add cleanup logic for server shutdown at the top level
+// Simple shutdown handler
 process.once("SIGTERM", async () => {
   logger.warn("SIGTERM received, performing graceful shutdown");
   await cleanupServerResources();
