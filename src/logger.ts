@@ -40,8 +40,13 @@ const logger = pino({
     service: "admin-server",
   },
 
-  // Use high-resolution timestamps
-  timestamp: () => `,"time":${Date.now()}`,
+  // Use Pino's built-in timestamp function
+  // In development: human-readable ISO timestamps
+  // In production: high-performance epoch timestamps
+  timestamp:
+    process.env.NODE_ENV === "development"
+      ? pino.stdTimeFunctions.isoTime
+      : pino.stdTimeFunctions.epochTime,
 
   // Enable message key for better readability in JSON
   messageKey: "msg",
