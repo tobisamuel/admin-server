@@ -351,14 +351,14 @@ async function startPolling(
     try {
       // Check if the flight is still being tracked in the database
       logger.debug({ faFlightId }, "Verifying tracking status");
-      const flightStatus = await db
+      const trackedFlight = await db
         .collection<FlightMetadata>("flights")
         .findOne({
           fa_flight_id: faFlightId,
           is_tracking: true,
         });
 
-      if (!flightStatus) {
+      if (!trackedFlight) {
         logger.info(
           { faFlightId },
           "Flight is no longer being tracked in the database, stopping polling"
@@ -383,6 +383,15 @@ async function startPolling(
           await stopPolling(faFlightId);
           return;
         }
+        return;
+      }
+
+      // Check if flight has actually taken off
+      if (!trackedFlight.actual_off) {
+        logger.debug(
+          { faFlightId },
+          "Flight hasn't taken off yet, skipping position update"
+        );
         return;
       }
 
