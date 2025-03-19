@@ -68,6 +68,7 @@ export type FlightMetadata = {
   is_tracking: boolean;
   waypoints?: string[];
   flightTrack: FlightTrackObject[];
+  is_last_flight?: boolean;
 };
 
 export type Stats = {
@@ -105,6 +106,7 @@ export type FlightCreationData = {
   fa_flight_id: string;
   origin: string;
   destination: string;
+  is_last_flight?: boolean;
 };
 
 // AeroAPI types

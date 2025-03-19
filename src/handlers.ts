@@ -133,11 +133,11 @@ export const searchFlights = async (req: Request) => {
 
 export const generateFlightMetadataAndSave = async (req: Request) => {
   try {
-    const { fa_flight_id, origin, destination } =
+    const { fa_flight_id, origin, destination, is_last_flight } =
       (await req.json()) as FlightCreationData;
 
     logger.info(
-      { fa_flight_id, origin, destination },
+      { fa_flight_id, origin, destination, is_last_flight },
       "Generating flight metadata"
     );
 
@@ -185,6 +185,8 @@ export const generateFlightMetadataAndSave = async (req: Request) => {
       destinationAirportInfo,
       flightTrack.positions
     );
+
+    flightMetadata.is_last_flight = is_last_flight;
 
     await db.collection("flights").insertOne(flightMetadata);
 
