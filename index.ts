@@ -360,7 +360,7 @@ async function startPolling(
   pollingInterval = setInterval(async () => {
     try {
       // Only check if we should still be tracking this flight
-      logger.debug({ faFlightId }, "Verifying tracking status");
+      logger.debug({ faFlightId }, "Starting polling interval");
       const isBeingTracked = await db
         .collection<FlightMetadata>("flights")
         .findOne({
@@ -378,11 +378,17 @@ async function startPolling(
       }
 
       // Fetch latest position data from API
-      logger.debug({ faFlightId }, "Fetching position data");
+      logger.debug(
+        { faFlightId, currentTime: new Date().toISOString() },
+        "Fetching position data from API"
+      );
       const newPositionData = await getFlightPosition(faFlightId);
 
       if (!newPositionData || !newPositionData.last_position) {
-        logger.warn({ faFlightId }, "No position data received");
+        logger.warn(
+          { faFlightId, responseReceived: !!newPositionData },
+          "No position data received from API"
+        );
         consecutiveErrors++;
 
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
@@ -399,9 +405,25 @@ async function startPolling(
       // Reset error counter on successful data fetch
       consecutiveErrors = 0;
 
-      // Use API data to determine flight state
-      const hasActuallyTakenOff = !!newPositionData.actual_off;
       const lastPosition = newPositionData.last_position;
+
+      // Log complete state for debugging
+      logger.debug(
+        {
+          faFlightId,
+          actual_off: newPositionData?.actual_off,
+          first_position_time: newPositionData?.first_position_time,
+          last_position: {
+            altitude: lastPosition.altitude,
+            groundspeed: lastPosition.groundspeed,
+            heading: lastPosition.heading,
+            latitude: lastPosition.latitude,
+            longitude: lastPosition.longitude,
+            timestamp: lastPosition.timestamp,
+          },
+        },
+        "Current API state"
+      );
 
       // Check for landing first
       if (
@@ -421,60 +443,83 @@ async function startPolling(
         return;
       }
 
-      // Skip position updates if flight hasn't taken off
-      if (!hasActuallyTakenOff) {
-        logger.debug(
-          { faFlightId },
-          "Flight hasn't taken off yet according to API, skipping position update"
-        );
-        return;
-      }
-
-      // Check if this is a new position (using timestamp)
-      const positionExists = await db
-        .collection<FlightMetadata>("flights")
-        .findOne({
-          fa_flight_id: faFlightId,
-          "flightTrack.timestamp": lastPosition.timestamp,
-        });
-
-      if (positionExists) {
-        logger.info(
-          { timestamp: lastPosition.timestamp },
-          "Position with timestamp already exists, skipping update"
-        );
-        return;
-      }
-
-      // All checks passed, update database and broadcast
-
-      // 1. Update flight data in database
-      const updates: { [key: string]: any } = {
-        $push: { flightTrack: lastPosition },
-      };
-
-      // Include actual_off update if it's newly available
+      // First handle the case where we have actual_off
       if (newPositionData.actual_off) {
-        updates.$set = { actual_off: newPositionData.actual_off };
+        // Update actual_off in database if changed
+        await db.collection<FlightMetadata>("flights").updateOne(
+          { fa_flight_id: faFlightId },
+          {
+            $set: { actual_off: newPositionData.actual_off },
+          }
+        );
+
+        // Check for duplicate position
+        const positionExists = await db
+          .collection<FlightMetadata>("flights")
+          .findOne({
+            fa_flight_id: faFlightId,
+            "flightTrack.timestamp": lastPosition.timestamp,
+          });
+
+        if (!positionExists) {
+          logger.info(
+            {
+              faFlightId,
+              position: {
+                altitude: lastPosition.altitude,
+                groundspeed: lastPosition.groundspeed,
+                heading: lastPosition.heading,
+                coordinates: `${lastPosition.latitude},${lastPosition.longitude}`,
+                timestamp: lastPosition.timestamp,
+              },
+            },
+            "Recording and broadcasting new position after takeoff"
+          );
+
+          // Update flight track
+          await db.collection<FlightMetadata>("flights").updateOne(
+            { fa_flight_id: faFlightId },
+            {
+              $push: { flightTrack: lastPosition },
+            }
+          );
+
+          // Broadcast update
+          broadcastUpdate("position_update", {
+            flight_id: faFlightId,
+            position: lastPosition,
+          });
+        } else {
+          logger.debug(
+            {
+              faFlightId,
+              timestamp: lastPosition.timestamp,
+            },
+            "Position already recorded, skipping update"
+          );
+        }
+      } else {
+        // Handle pre-takeoff state
+        logger.debug(
+          {
+            faFlightId,
+            first_position_time: newPositionData.first_position_time,
+            position: {
+              altitude: lastPosition.altitude,
+              groundspeed: lastPosition.groundspeed,
+              coordinates: `${lastPosition.latitude},${lastPosition.longitude}`,
+            },
+          },
+          "Waiting for takeoff (actual_off not available yet)"
+        );
       }
-
-      await db
-        .collection<FlightMetadata>("flights")
-        .updateOne({ fa_flight_id: faFlightId }, updates);
-
-      // 2. Broadcast position update
-      logger.info({ faFlightId }, "Broadcasting position update");
-      broadcastUpdate("position_update", {
-        flight_id: faFlightId,
-        position: lastPosition,
-      });
-      logger.info(
-        { timestamp: lastPosition.timestamp },
-        "Position update broadcast completed"
-      );
     } catch (error) {
       logger.error(
-        { err: error, faFlightId },
+        {
+          err: error,
+          faFlightId,
+          stack: error instanceof Error ? error.stack : undefined,
+        },
         "Error polling flight position data"
       );
 
