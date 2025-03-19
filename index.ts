@@ -461,8 +461,6 @@ async function startPolling(
 
         const estimatedArrival = calculateEstimatedArrival(
           newPositionData.actual_off,
-          lastPosition,
-          flightData.destination,
           flightData.filed_ete
         );
 
@@ -1135,39 +1133,11 @@ function calculateArrivalDelay(
 }
 
 // Add an estimated arrival time calculation
-function calculateEstimatedArrival(
-  actualOff: string | null,
-  lastPosition: FlightTrackObject,
-  destination: any,
-  filedEte: number
-): string | null {
+function calculateEstimatedArrival(actualOff: string | null, filedEte: number) {
   if (!actualOff) return null;
 
-  const now = new Date().getTime();
   const actualOffTime = new Date(actualOff).getTime();
-  const elapsedTime = now - actualOffTime;
-
-  // Calculate remaining time based on progress
-  const totalDistance = calculateDistance(
-    lastPosition.latitude,
-    lastPosition.longitude,
-    destination.latitude,
-    destination.longitude
-  );
-
-  // Speed in km/h
-  const speed = lastPosition.groundspeed * 1.852; // Convert kts to km/h
-
-  // If speed is too low, use filed ETE as fallback
-  if (speed < 50) {
-    const estimatedArrival = new Date(actualOffTime + filedEte * 1000);
-    return estimatedArrival.toISOString();
-  }
-
-  // Time remaining in ms
-  const timeRemaining = (totalDistance / speed) * 3600 * 1000;
-
-  // Calculate new ETA
-  const estimatedArrival = new Date(now + timeRemaining);
+  // Calculate ETA by adding filed ETE to actual takeoff time
+  const estimatedArrival = new Date(actualOffTime + filedEte * 1000);
   return estimatedArrival.toISOString();
 }
