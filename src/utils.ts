@@ -94,7 +94,7 @@ export function getCountriesVisited(flights: FlightMetadata[]) {
   // Process flights in order
   flights.forEach((flight) => {
     // Only count countries from completed flights
-    if (flight.status === "Arrived / Gate Arrival") {
+    if (flight.standardized_status === "completed") {
       // Add both origin and destination countries for all flights
       visitedCountries.add(flight.origin!.country_code);
       visitedCountries.add(flight.destination!.country_code);
