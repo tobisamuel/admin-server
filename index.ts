@@ -266,14 +266,15 @@ async function startPolling(
     .collection<FlightMetadata>("flights")
     .findOne({ fa_flight_id: faFlightId });
 
+  if (!existingFlight) {
+    logger.error({ faFlightId }, "Flight not found in database");
+    return;
+  }
+
   // Merge existing track data with new positions to avoid data loss
   let mergedTrackData: FlightTrackObject[] = [];
 
-  if (
-    existingFlight &&
-    existingFlight.flightTrack &&
-    existingFlight.flightTrack.length > 0
-  ) {
+  if (existingFlight.flightTrack && existingFlight.flightTrack.length > 0) {
     logger.info(
       { count: existingFlight.flightTrack.length },
       "Found existing flight track"
@@ -332,14 +333,23 @@ async function startPolling(
       { returnDocument: "after" }
     );
 
+  const currentPosition = initialPositionData.actual_off
+    ? {
+        latitude: initialPositionData.last_position.latitude,
+        longitude: initialPositionData.last_position.longitude,
+        heading: initialPositionData.last_position.heading,
+        timestamp: initialPositionData.last_position.timestamp,
+      }
+    : {
+        latitude: existingFlight.origin.latitude,
+        longitude: existingFlight.origin.longitude,
+        heading: 0,
+        timestamp: existingFlight.scheduled_off,
+      };
+
   broadcastUpdate("start_flight", {
     flight: updatedFlight,
-    current_position: {
-      latitude: initialPositionData.last_position.latitude,
-      longitude: initialPositionData.last_position.longitude,
-      heading: initialPositionData.last_position.heading,
-      timestamp: initialPositionData.last_position.timestamp,
-    },
+    current_position: currentPosition,
   });
 
   // Variables for retry mechanism
