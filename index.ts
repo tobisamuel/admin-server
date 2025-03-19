@@ -359,16 +359,16 @@ async function startPolling(
   // Start polling FlightAware API for position updates only
   pollingInterval = setInterval(async () => {
     try {
-      // Only check if we should still be tracking this flight
+      // Check if the flight is still being tracked in the database
       logger.debug({ faFlightId }, "Starting polling interval");
-      const isBeingTracked = await db
+      const flightData = await db
         .collection<FlightMetadata>("flights")
         .findOne({
           fa_flight_id: faFlightId,
           is_tracking: true,
         });
 
-      if (!isBeingTracked) {
+      if (!flightData) {
         logger.info(
           { faFlightId },
           "Flight is no longer being tracked in the database, stopping polling"
@@ -445,11 +445,43 @@ async function startPolling(
 
       // First handle the case where we have actual_off
       if (newPositionData.actual_off) {
+        // Calculate derived flight status data
+        const progress = calculateProgressFromPositions(
+          flightData.flightTrack,
+          lastPosition,
+          flightData.origin,
+          flightData.destination,
+          flightData.filed_ete
+        );
+
+        const departureDelay = calculateDepartureDelay(
+          newPositionData.actual_off,
+          flightData.scheduled_off
+        );
+
+        const estimatedArrival = calculateEstimatedArrival(
+          newPositionData.actual_off,
+          lastPosition,
+          flightData.destination,
+          flightData.filed_ete
+        );
+
+        // Calculate arrival delay based on estimated arrival
+        const arrivalDelay = estimatedArrival
+          ? calculateArrivalDelay(estimatedArrival, flightData.scheduled_in)
+          : flightData.arrival_delay || 0;
+
         // Update actual_off in database if changed
         await db.collection<FlightMetadata>("flights").updateOne(
           { fa_flight_id: faFlightId },
           {
-            $set: { actual_off: newPositionData.actual_off },
+            $set: {
+              actual_off: newPositionData.actual_off,
+              departure_delay: departureDelay,
+              arrival_delay: arrivalDelay,
+              progress_percent: progress,
+              estimated_on: estimatedArrival || undefined,
+            },
           }
         );
 
@@ -472,6 +504,9 @@ async function startPolling(
                 coordinates: `${lastPosition.latitude},${lastPosition.longitude}`,
                 timestamp: lastPosition.timestamp,
               },
+              progress,
+              departure_delay: departureDelay,
+              arrival_delay: arrivalDelay,
             },
             "Recording and broadcasting new position after takeoff"
           );
@@ -484,10 +519,18 @@ async function startPolling(
             }
           );
 
-          // Broadcast update
+          // Enhanced broadcast with flight status
           broadcastUpdate("position_update", {
             flight_id: faFlightId,
             position: lastPosition,
+            flight_status: {
+              actual_off: newPositionData.actual_off,
+              actual_on: newPositionData.actual_on,
+              progress_percent: progress,
+              departure_delay: departureDelay,
+              arrival_delay: arrivalDelay,
+              estimated_on: estimatedArrival,
+            },
           });
         } else {
           logger.debug(
@@ -999,4 +1042,132 @@ async function handleStopTracking(req: Request): Promise<Response> {
   } catch (error) {
     return jsonWithCors({ error: "Failed to stop tracking" }, { status: 500 });
   }
+}
+
+// Add utility functions for calculating flight status data
+function calculateProgressFromPositions(
+  flightTrack: FlightTrackObject[],
+  lastPosition: FlightTrackObject,
+  origin: any,
+  destination: any,
+  filedEte: number
+): number {
+  // If no track data or no actual_off, calculate based on scheduled times
+  if (!flightTrack.length || flightTrack.length < 2) {
+    return 0;
+  }
+
+  // Calculate total distance
+  const totalDistance = calculateDistance(
+    origin.latitude,
+    origin.longitude,
+    destination.latitude,
+    destination.longitude
+  );
+
+  // Calculate distance traveled
+  const distanceTraveled = calculateDistance(
+    origin.latitude,
+    origin.longitude,
+    lastPosition.latitude,
+    lastPosition.longitude
+  );
+
+  // Calculate progress percentage
+  const progress = Math.min(
+    100,
+    Math.max(0, (distanceTraveled / totalDistance) * 100)
+  );
+
+  return Number(progress.toFixed(1));
+}
+
+function calculateDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  // Skip calculation if coordinates are invalid
+  if (lat1 === 0 && lon1 === 0) return 0;
+  if (lat2 === 0 && lon2 === 0) return 0;
+
+  // Simple haversine formula to calculate distance between two points
+  const R = 6371; // Radius of the earth in km
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) *
+      Math.cos(deg2rad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Distance in km
+}
+
+function deg2rad(deg: number): number {
+  return deg * (Math.PI / 180);
+}
+
+function calculateDepartureDelay(
+  actualOff: string | null,
+  scheduledOff: string | null
+): number {
+  if (!actualOff || !scheduledOff) return 0;
+
+  const actualTime = new Date(actualOff).getTime();
+  const scheduledTime = new Date(scheduledOff).getTime();
+
+  return Math.round((actualTime - scheduledTime) / 1000); // Delay in seconds
+}
+
+function calculateArrivalDelay(
+  actualOn: string | null,
+  scheduledIn: string | null
+): number {
+  if (!actualOn || !scheduledIn) return 0;
+
+  const actualTime = new Date(actualOn).getTime();
+  const scheduledTime = new Date(scheduledIn).getTime();
+
+  return Math.round((actualTime - scheduledTime) / 1000); // Delay in seconds
+}
+
+// Add an estimated arrival time calculation
+function calculateEstimatedArrival(
+  actualOff: string | null,
+  lastPosition: FlightTrackObject,
+  destination: any,
+  filedEte: number
+): string | null {
+  if (!actualOff) return null;
+
+  const now = new Date().getTime();
+  const actualOffTime = new Date(actualOff).getTime();
+  const elapsedTime = now - actualOffTime;
+
+  // Calculate remaining time based on progress
+  const totalDistance = calculateDistance(
+    lastPosition.latitude,
+    lastPosition.longitude,
+    destination.latitude,
+    destination.longitude
+  );
+
+  // Speed in km/h
+  const speed = lastPosition.groundspeed * 1.852; // Convert kts to km/h
+
+  // If speed is too low, use filed ETE as fallback
+  if (speed < 50) {
+    const estimatedArrival = new Date(actualOffTime + filedEte * 1000);
+    return estimatedArrival.toISOString();
+  }
+
+  // Time remaining in ms
+  const timeRemaining = (totalDistance / speed) * 3600 * 1000;
+
+  // Calculate new ETA
+  const estimatedArrival = new Date(now + timeRemaining);
+  return estimatedArrival.toISOString();
 }
