@@ -190,6 +190,8 @@ async function getInitialState() {
   const lastCompletedFlight = completedFlights[completedFlights.length - 1];
 
   return {
+    startTime: firstScheduledFlight?.scheduled_off,
+    endTime: null,
     client_count: clientConnections.size,
     active_flight: activeFlightData,
     current_location: lastCompletedFlight
