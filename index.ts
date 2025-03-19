@@ -359,16 +359,16 @@ async function startPolling(
   // Start polling FlightAware API for position updates only
   pollingInterval = setInterval(async () => {
     try {
-      // Check if the flight is still being tracked in the database
+      // Only check if we should still be tracking this flight
       logger.debug({ faFlightId }, "Verifying tracking status");
-      const trackedFlight = await db
+      const isBeingTracked = await db
         .collection<FlightMetadata>("flights")
         .findOne({
           fa_flight_id: faFlightId,
           is_tracking: true,
         });
 
-      if (!trackedFlight) {
+      if (!isBeingTracked) {
         logger.info(
           { faFlightId },
           "Flight is no longer being tracked in the database, stopping polling"
@@ -377,7 +377,7 @@ async function startPolling(
         return;
       }
 
-      // Only fetch position data during polling
+      // Fetch latest position data from API
       logger.debug({ faFlightId }, "Fetching position data");
       const newPositionData = await getFlightPosition(faFlightId);
 
@@ -396,17 +396,14 @@ async function startPolling(
         return;
       }
 
-      // Check if flight has actually taken off
-      if (!trackedFlight.actual_off) {
-        logger.debug(
-          { faFlightId },
-          "Flight hasn't taken off yet, skipping position update"
-        );
-        return;
-      }
+      // Reset error counter on successful data fetch
+      consecutiveErrors = 0;
 
-      // Check for landing indicators
+      // Use API data to determine flight state
+      const hasActuallyTakenOff = !!newPositionData.actual_off;
       const lastPosition = newPositionData.last_position;
+
+      // Check for landing first
       if (
         newPositionData.actual_on ||
         (lastPosition.altitude === -1 && lastPosition.groundspeed === 0)
@@ -424,42 +421,55 @@ async function startPolling(
         return;
       }
 
-      // Reset error counter on successful data fetch
-      consecutiveErrors = 0;
+      // Skip position updates if flight hasn't taken off
+      if (!hasActuallyTakenOff) {
+        logger.debug(
+          { faFlightId },
+          "Flight hasn't taken off yet according to API, skipping position update"
+        );
+        return;
+      }
 
-      // Check if this position already exists in the database
+      // Check if this is a new position (using timestamp)
       const positionExists = await db
         .collection<FlightMetadata>("flights")
         .findOne({
           fa_flight_id: faFlightId,
-          "flightTrack.timestamp": newPositionData.last_position.timestamp,
+          "flightTrack.timestamp": lastPosition.timestamp,
         });
 
       if (positionExists) {
         logger.info(
-          { timestamp: newPositionData.last_position.timestamp },
+          { timestamp: lastPosition.timestamp },
           "Position with timestamp already exists, skipping update"
         );
         return;
       }
 
-      // Update flight track data in database with new position
-      logger.info({ faFlightId }, "Updating flight track in database");
-      await db.collection<FlightMetadata>("flights").updateOne(
-        { fa_flight_id: faFlightId },
-        {
-          $push: { flightTrack: newPositionData.last_position },
-        }
-      );
+      // All checks passed, update database and broadcast
 
-      // Broadcast position update
+      // 1. Update flight data in database
+      const updates: { [key: string]: any } = {
+        $push: { flightTrack: lastPosition },
+      };
+
+      // Include actual_off update if it's newly available
+      if (newPositionData.actual_off) {
+        updates.$set = { actual_off: newPositionData.actual_off };
+      }
+
+      await db
+        .collection<FlightMetadata>("flights")
+        .updateOne({ fa_flight_id: faFlightId }, updates);
+
+      // 2. Broadcast position update
       logger.info({ faFlightId }, "Broadcasting position update");
       broadcastUpdate("position_update", {
         flight_id: faFlightId,
-        position: newPositionData.last_position,
+        position: lastPosition,
       });
       logger.info(
-        { timestamp: newPositionData.last_position.timestamp },
+        { timestamp: lastPosition.timestamp },
         "Position update broadcast completed"
       );
     } catch (error) {
