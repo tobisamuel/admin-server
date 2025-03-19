@@ -196,8 +196,8 @@ async function getInitialState() {
     active_flight: activeFlightData,
     current_location: lastCompletedFlight
       ? {
-          country: lastCompletedFlight.destination.name,
-          country_code: lastCompletedFlight.destination.country_code,
+          country: lastCompletedFlight.destination.country_code,
+          name: lastCompletedFlight.destination.name,
           latitude: lastCompletedFlight.destination.latitude,
           longitude: lastCompletedFlight.destination.longitude,
           heading: 0,
@@ -205,8 +205,8 @@ async function getInitialState() {
         }
       : firstScheduledFlight
       ? {
-          country: firstScheduledFlight.origin.name,
-
+          country: firstScheduledFlight.origin.country_code,
+          name: firstScheduledFlight.origin.name,
           latitude: firstScheduledFlight.origin.latitude,
           longitude: firstScheduledFlight.origin.longitude,
           heading: 0,
