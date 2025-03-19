@@ -182,14 +182,30 @@ async function getInitialState() {
   const completedFlights = flights.filter(
     (f) => f.standardized_status === "completed"
   );
+  const firstScheduledFlight = flights[0];
+  const lastCompletedFlight = completedFlights[completedFlights.length - 1];
+  const lastFlight = flights.find((f) => f.is_last_flight);
+
   const activeFlightData = flights.find((f) => f.is_tracking) || null;
   const lastPosition =
     activeFlightData?.flightTrack?.[activeFlightData.flightTrack.length - 1] ||
     null;
-  const firstScheduledFlight = flights[0];
-  const lastCompletedFlight = completedFlights[completedFlights.length - 1];
 
-  const lastFlight = flights.find((f) => f.is_last_flight);
+  const currentPosition = activeFlightData
+    ? activeFlightData.flightTrack && activeFlightData.flightTrack.length > 0
+      ? {
+          latitude: lastPosition?.latitude,
+          longitude: lastPosition?.longitude,
+          heading: lastPosition?.heading,
+          timestamp: lastPosition?.timestamp,
+        }
+      : {
+          latitude: activeFlightData.origin.latitude,
+          longitude: activeFlightData.origin.longitude,
+          heading: 0,
+          timestamp: activeFlightData.scheduled_off,
+        }
+    : null;
 
   return {
     start_time: firstScheduledFlight?.scheduled_off,
@@ -215,14 +231,7 @@ async function getInitialState() {
           timestamp: firstScheduledFlight.scheduled_off,
         }
       : null,
-    current_position: lastPosition
-      ? {
-          latitude: lastPosition.latitude,
-          longitude: lastPosition.longitude,
-          heading: lastPosition.heading,
-          timestamp: lastPosition.timestamp,
-        }
-      : null,
+    current_position: currentPosition,
     completed_flights: completedFlights,
     stats: {
       total_miles: completedFlights.reduce(
