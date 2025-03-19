@@ -192,7 +192,9 @@ async function getInitialState() {
     null;
 
   const currentPosition = activeFlightData
-    ? activeFlightData.flightTrack && activeFlightData.flightTrack.length > 0
+    ? activeFlightData.actual_off &&
+      activeFlightData.flightTrack &&
+      activeFlightData.flightTrack.length > 0
       ? {
           latitude: lastPosition?.latitude,
           longitude: lastPosition?.longitude,
@@ -203,7 +205,8 @@ async function getInitialState() {
           latitude: activeFlightData.origin.latitude,
           longitude: activeFlightData.origin.longitude,
           heading: 0,
-          timestamp: activeFlightData.scheduled_off,
+          timestamp:
+            activeFlightData.actual_off || activeFlightData.scheduled_off,
         }
     : null;
 
