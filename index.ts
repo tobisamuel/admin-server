@@ -896,9 +896,9 @@ async function restoreTrackingState() {
   }
 }
 
-async function stopPolling(faFlightId: string) {
+async function stopPolling(faFlightId: string, isManualStop: boolean = false) {
   try {
-    logger.info({ faFlightId }, "Stopping polling");
+    logger.info({ faFlightId, isManualStop }, "Stopping polling");
 
     // Clear polling interval
     if (pollingInterval) {
@@ -952,11 +952,9 @@ async function stopPolling(faFlightId: string) {
     const standardizedStatus = standardizeFlightStatus(finalStatus);
 
     // Determine the reason for stopping based on existing fields
-    let trackingEndedReason = "manual_stop";
+    let trackingEndedReason = isManualStop ? "manual_stop" : "completed";
     if (finalFlightData?.flights?.[0]?.cancelled) {
       trackingEndedReason = "cancelled";
-    } else if (standardizedStatus === "completed") {
-      trackingEndedReason = "completed";
     }
 
     // Update flight status and set is_tracking to false with all relevant data
@@ -1009,9 +1007,14 @@ async function stopPolling(faFlightId: string) {
         { returnDocument: "after" }
       );
 
-    // Broadcast final update
-    logger.info({ faFlightId }, "Broadcasting flight completion");
-    broadcastUpdate("flight_completed", updatedFlight);
+    // Broadcast appropriate event based on stop type
+    if (isManualStop) {
+      logger.info({ faFlightId }, "Broadcasting manual stop");
+      broadcastUpdate("flight_stopped", updatedFlight);
+    } else {
+      logger.info({ faFlightId }, "Broadcasting flight completion");
+      broadcastUpdate("flight_completed", updatedFlight);
+    }
 
     return true;
   } catch (error) {
@@ -1028,7 +1031,7 @@ async function handleStopTracking(req: Request): Promise<Response> {
       return jsonWithCors({ error: "Missing flight ID" }, { status: 400 });
     }
 
-    const success = await stopPolling(body.fa_flight_id);
+    const success = await stopPolling(body.fa_flight_id, true);
 
     if (success) {
       return jsonWithCors({ message: "Tracking stopped successfully" });
