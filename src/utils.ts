@@ -4,6 +4,7 @@ import type {
   AirportResponse,
   DetailedFlight,
   FlightMetadata,
+  FlightTrackObject,
   FlightTrackResponse,
 } from "./types";
 
@@ -160,4 +161,105 @@ export function standardizeFlightStatus(
     `Could not classify primary status "${primaryStatus}", defaulting to: "unknown"`
   );
   return "unknown";
+}
+
+export function calculateEstimatedArrival(
+  actualOff: string | null,
+  filedEte: number
+) {
+  if (!actualOff) return null;
+
+  const actualOffTime = new Date(actualOff).getTime();
+  // Calculate ETA by adding filed ETE to actual takeoff time
+  const estimatedArrival = new Date(actualOffTime + filedEte * 1000);
+  return estimatedArrival.toISOString();
+}
+export function calculateArrivalDelay(
+  actualOn: string | null,
+  scheduledOn: string | null
+): number {
+  if (!actualOn || !scheduledOn) return 0;
+
+  const actualTime = new Date(actualOn).getTime();
+  const scheduledTime = new Date(scheduledOn).getTime();
+
+  return Math.round((actualTime - scheduledTime) / 1000); // Delay in seconds
+}
+
+// Add utility functions for calculating flight status data
+export function calculateProgressFromPositions(
+  flightTrack: FlightTrackObject[],
+  lastPosition: FlightTrackObject,
+  origin: any,
+  destination: any,
+  filedEte: number
+): number {
+  // If no track data or no actual_off, calculate based on scheduled times
+  if (!flightTrack.length || flightTrack.length < 2) {
+    return 0;
+  }
+
+  // Calculate total distance
+  const totalDistance = calculateDistance(
+    origin.latitude,
+    origin.longitude,
+    destination.latitude,
+    destination.longitude
+  );
+
+  // Calculate distance traveled
+  const distanceTraveled = calculateDistance(
+    origin.latitude,
+    origin.longitude,
+    lastPosition.latitude,
+    lastPosition.longitude
+  );
+
+  // Calculate progress percentage
+  const progress = Math.min(
+    100,
+    Math.max(0, (distanceTraveled / totalDistance) * 100)
+  );
+
+  return Number(progress.toFixed(1));
+}
+
+export function calculateDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  // Skip calculation if coordinates are invalid
+  if (lat1 === 0 && lon1 === 0) return 0;
+  if (lat2 === 0 && lon2 === 0) return 0;
+
+  // Simple haversine formula to calculate distance between two points
+  const R = 6371; // Radius of the earth in km
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) *
+      Math.cos(deg2rad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Distance in km
+}
+
+export function deg2rad(deg: number): number {
+  return deg * (Math.PI / 180);
+}
+
+export function calculateDepartureDelay(
+  actualOff: string | null,
+  scheduledOff: string | null
+): number {
+  if (!actualOff || !scheduledOff) return 0;
+
+  const actualTime = new Date(actualOff).getTime();
+  const scheduledTime = new Date(scheduledOff).getTime();
+
+  return Math.round((actualTime - scheduledTime) / 1000); // Delay in seconds
 }

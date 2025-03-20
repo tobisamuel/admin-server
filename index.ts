@@ -22,7 +22,15 @@ import {
   type WebSocketEvent,
   type WebSocketEventType,
 } from "./src/types";
-import { getCountriesVisited, db, standardizeFlightStatus } from "./src/utils";
+import {
+  calculateArrivalDelay,
+  calculateDepartureDelay,
+  calculateEstimatedArrival,
+  calculateProgressFromPositions,
+  db,
+  getCountriesVisited,
+  standardizeFlightStatus,
+} from "./src/utils";
 
 // Simplified connection tracking
 const clientConnections = new Set<ServerWebSocket>();
@@ -888,25 +896,14 @@ async function restoreTrackingState() {
   }
 }
 
-async function stopPolling(
-  faFlightId: string,
-  serverShutdown: boolean = false
-) {
+async function stopPolling(faFlightId: string) {
   try {
-    logger.info({ faFlightId, serverShutdown }, "Stopping polling");
+    logger.info({ faFlightId }, "Stopping polling");
 
     // Clear polling interval
     if (pollingInterval) {
       clearInterval(pollingInterval);
       pollingInterval = null;
-    }
-
-    // If this is a server shutdown, don't perform redundant database updates
-    if (serverShutdown) {
-      logger.info(
-        "Server shutdown detected, only clearing interval and setting currentFlightId"
-      );
-      return true;
     }
 
     // Get the current flight data
@@ -955,9 +952,7 @@ async function stopPolling(
     const standardizedStatus = standardizeFlightStatus(finalStatus);
 
     // Determine the reason for stopping based on existing fields
-    let trackingEndedReason = serverShutdown
-      ? "server_shutdown"
-      : "manual_stop";
+    let trackingEndedReason = "manual_stop";
     if (finalFlightData?.flights?.[0]?.cancelled) {
       trackingEndedReason = "cancelled";
     } else if (standardizedStatus === "completed") {
@@ -1033,7 +1028,7 @@ async function handleStopTracking(req: Request): Promise<Response> {
       return jsonWithCors({ error: "Missing flight ID" }, { status: 400 });
     }
 
-    const success = await stopPolling(body.fa_flight_id, true);
+    const success = await stopPolling(body.fa_flight_id);
 
     if (success) {
       return jsonWithCors({ message: "Tracking stopped successfully" });
@@ -1046,104 +1041,4 @@ async function handleStopTracking(req: Request): Promise<Response> {
   } catch (error) {
     return jsonWithCors({ error: "Failed to stop tracking" }, { status: 500 });
   }
-}
-
-// Add utility functions for calculating flight status data
-function calculateProgressFromPositions(
-  flightTrack: FlightTrackObject[],
-  lastPosition: FlightTrackObject,
-  origin: any,
-  destination: any,
-  filedEte: number
-): number {
-  // If no track data or no actual_off, calculate based on scheduled times
-  if (!flightTrack.length || flightTrack.length < 2) {
-    return 0;
-  }
-
-  // Calculate total distance
-  const totalDistance = calculateDistance(
-    origin.latitude,
-    origin.longitude,
-    destination.latitude,
-    destination.longitude
-  );
-
-  // Calculate distance traveled
-  const distanceTraveled = calculateDistance(
-    origin.latitude,
-    origin.longitude,
-    lastPosition.latitude,
-    lastPosition.longitude
-  );
-
-  // Calculate progress percentage
-  const progress = Math.min(
-    100,
-    Math.max(0, (distanceTraveled / totalDistance) * 100)
-  );
-
-  return Number(progress.toFixed(1));
-}
-
-function calculateDistance(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number
-): number {
-  // Skip calculation if coordinates are invalid
-  if (lat1 === 0 && lon1 === 0) return 0;
-  if (lat2 === 0 && lon2 === 0) return 0;
-
-  // Simple haversine formula to calculate distance between two points
-  const R = 6371; // Radius of the earth in km
-  const dLat = deg2rad(lat2 - lat1);
-  const dLon = deg2rad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(deg2rad(lat1)) *
-      Math.cos(deg2rad(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c; // Distance in km
-}
-
-function deg2rad(deg: number): number {
-  return deg * (Math.PI / 180);
-}
-
-function calculateDepartureDelay(
-  actualOff: string | null,
-  scheduledOff: string | null
-): number {
-  if (!actualOff || !scheduledOff) return 0;
-
-  const actualTime = new Date(actualOff).getTime();
-  const scheduledTime = new Date(scheduledOff).getTime();
-
-  return Math.round((actualTime - scheduledTime) / 1000); // Delay in seconds
-}
-
-function calculateArrivalDelay(
-  actualOn: string | null,
-  scheduledOn: string | null
-): number {
-  if (!actualOn || !scheduledOn) return 0;
-
-  const actualTime = new Date(actualOn).getTime();
-  const scheduledTime = new Date(scheduledOn).getTime();
-
-  return Math.round((actualTime - scheduledTime) / 1000); // Delay in seconds
-}
-
-// Add an estimated arrival time calculation
-function calculateEstimatedArrival(actualOff: string | null, filedEte: number) {
-  if (!actualOff) return null;
-
-  const actualOffTime = new Date(actualOff).getTime();
-  // Calculate ETA by adding filed ETE to actual takeoff time
-  const estimatedArrival = new Date(actualOffTime + filedEte * 1000);
-  return estimatedArrival.toISOString();
 }
