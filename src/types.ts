@@ -59,7 +59,12 @@ export type FlightMetadata = {
   actual_in: string | null;
   progress_percent: number;
   status: string;
-  standardized_status: "scheduled" | "active" | "completed" | "unknown";
+  standardized_status:
+    | "scheduled"
+    | "taxiing"
+    | "active"
+    | "completed"
+    | "unknown";
   aircraft_type: string;
   route_distance: number;
   filed_airspeed: number;

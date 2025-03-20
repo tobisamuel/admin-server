@@ -106,13 +106,13 @@ export function getCountriesVisited(flights: FlightMetadata[]) {
 }
 
 /**
- * Standardizes AeroAPI flight status into three main states: scheduled, active, or completed
+ * Standardizes AeroAPI flight status into main states: scheduled, taxiing, active, or completed
  * @param status The status string from AeroAPI response
  * @returns A standardized status string
  */
 export function standardizeFlightStatus(
   status: string | null | undefined
-): "scheduled" | "active" | "completed" | "unknown" {
+): "scheduled" | "taxiing" | "active" | "completed" | "unknown" {
   if (!status) return "unknown";
 
   console.log(`Standardizing flight status: "${status}"`);
@@ -129,14 +129,16 @@ export function standardizeFlightStatus(
     landed: "completed",
     completed: "completed",
 
-    // Active states
+    // Active states (in air)
     "en route": "active",
     "in-air": "active",
     "in air": "active",
     departed: "active",
-    taxi: "active",
-    taxiing: "active",
     takeoff: "active",
+
+    // Taxiing states (on ground, engines running)
+    taxi: "taxiing",
+    taxiing: "taxiing",
 
     // Scheduled states
     scheduled: "scheduled",

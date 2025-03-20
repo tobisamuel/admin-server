@@ -210,30 +210,32 @@ async function getInitialState() {
         }
     : null;
 
+  const currentLocation = lastCompletedFlight
+    ? {
+        country: lastCompletedFlight.destination.country_code,
+        name: lastCompletedFlight.destination.city,
+        latitude: lastCompletedFlight.destination.latitude,
+        longitude: lastCompletedFlight.destination.longitude,
+        heading: 0,
+        timestamp: lastCompletedFlight.actual_on,
+      }
+    : firstScheduledFlight
+    ? {
+        country: firstScheduledFlight.origin.country_code,
+        name: firstScheduledFlight.origin.city,
+        latitude: firstScheduledFlight.origin.latitude,
+        longitude: firstScheduledFlight.origin.longitude,
+        heading: 0,
+        timestamp: firstScheduledFlight.scheduled_off,
+      }
+    : null;
+
   return {
     start_time: firstScheduledFlight?.scheduled_off,
     end_time: lastFlight?.actual_on ?? null,
     client_count: clientConnections.size,
     active_flight: activeFlightData,
-    current_location: lastCompletedFlight
-      ? {
-          country: lastCompletedFlight.destination.country_code,
-          name: lastCompletedFlight.destination.city,
-          latitude: lastCompletedFlight.destination.latitude,
-          longitude: lastCompletedFlight.destination.longitude,
-          heading: 0,
-          timestamp: lastCompletedFlight.actual_on,
-        }
-      : firstScheduledFlight
-      ? {
-          country: firstScheduledFlight.origin.country_code,
-          name: firstScheduledFlight.origin.city,
-          latitude: firstScheduledFlight.origin.latitude,
-          longitude: firstScheduledFlight.origin.longitude,
-          heading: 0,
-          timestamp: firstScheduledFlight.scheduled_off,
-        }
-      : null,
+    current_location: currentLocation,
     current_position: currentPosition,
     completed_flights: completedFlights,
     stats: {
@@ -251,9 +253,9 @@ async function getInitialState() {
 // Extract polling logic into a separate function
 async function startPolling(
   faFlightId: string,
-  initialPositionData: FlightPositionResponse,
+  flightPositionState: FlightPositionResponse,
   initialFlightData: FlightInfoResponse,
-  positions: FlightTrackObject[]
+  existingPositions: FlightTrackObject[]
 ) {
   // Clear any existing polling
   if (pollingInterval) {
@@ -289,7 +291,7 @@ async function startPolling(
     mergedTrackData = [...existingFlight.flightTrack];
 
     // Add new positions that don't already exist
-    for (const pos of positions) {
+    for (const pos of existingPositions) {
       if (!existingTimestamps.has(pos.timestamp)) {
         mergedTrackData.push(pos);
       }
@@ -307,7 +309,7 @@ async function startPolling(
     );
   } else {
     // No existing track data, just use the new positions
-    mergedTrackData = positions;
+    mergedTrackData = existingPositions;
     logger.info(
       { count: mergedTrackData.length },
       "No existing flight track, using positions from API"
@@ -322,23 +324,25 @@ async function startPolling(
       {
         $set: {
           status: initialFlightData?.flights?.[0]?.status,
-          standardized_status: initialFlightData?.flights?.[0]?.status
-            ? standardizeFlightStatus(initialFlightData?.flights?.[0]?.status)
-            : "unknown",
+          standardized_status: flightPositionState.actual_off
+            ? standardizeFlightStatus(
+                initialFlightData?.flights?.[0]?.status || "active"
+              )
+            : "taxiing",
           is_tracking: true,
-          waypoints: initialPositionData.waypoints,
-          flightTrack: mergedTrackData,
+          waypoints: flightPositionState.waypoints,
+          flightTrack: flightPositionState.actual_off ? mergedTrackData : [],
         },
       },
       { returnDocument: "after" }
     );
 
-  const currentPosition = initialPositionData.actual_off
+  const currentPosition = flightPositionState.actual_off
     ? {
-        latitude: initialPositionData.last_position.latitude,
-        longitude: initialPositionData.last_position.longitude,
-        heading: initialPositionData.last_position.heading,
-        timestamp: initialPositionData.last_position.timestamp,
+        latitude: flightPositionState.last_position.latitude,
+        longitude: flightPositionState.last_position.longitude,
+        heading: flightPositionState.last_position.heading,
+        timestamp: flightPositionState.last_position.timestamp,
       }
     : {
         latitude: existingFlight.origin.latitude,
@@ -384,10 +388,15 @@ async function startPolling(
       );
       const newPositionData = await getFlightPosition(faFlightId);
 
-      if (!newPositionData || !newPositionData.last_position) {
+      // Check if we received a valid API response with position data
+      // This handles both API failures and cases where the flight has completed
+      if (!newPositionData?.last_position) {
         logger.warn(
-          { faFlightId, responseReceived: !!newPositionData },
-          "No position data received from API"
+          {
+            faFlightId,
+            responseReceived: !!newPositionData,
+          },
+          "No valid position data received from API"
         );
         consecutiveErrors++;
 
@@ -406,24 +415,6 @@ async function startPolling(
       consecutiveErrors = 0;
 
       const lastPosition = newPositionData.last_position;
-
-      // Log complete state for debugging
-      logger.debug(
-        {
-          faFlightId,
-          actual_off: newPositionData?.actual_off,
-          first_position_time: newPositionData?.first_position_time,
-          last_position: {
-            altitude: lastPosition.altitude,
-            groundspeed: lastPosition.groundspeed,
-            heading: lastPosition.heading,
-            latitude: lastPosition.latitude,
-            longitude: lastPosition.longitude,
-            timestamp: lastPosition.timestamp,
-          },
-        },
-        "Current API state"
-      );
 
       // Check for landing first
       if (
@@ -469,7 +460,11 @@ async function startPolling(
           ? calculateArrivalDelay(estimatedArrival, flightData.scheduled_on)
           : flightData.arrival_delay || 0;
 
-        // Update actual_off in database if changed
+        // Check if this is the first time we're seeing actual_off (transition from taxiing to active)
+        const isTransitioningToActive =
+          flightData.standardized_status === "taxiing";
+
+        // Update actual_off in database and transition to active state
         await db.collection<FlightMetadata>("flights").updateOne(
           { fa_flight_id: faFlightId },
           {
@@ -479,9 +474,22 @@ async function startPolling(
               arrival_delay: arrivalDelay,
               progress_percent: progress,
               estimated_on: estimatedArrival || undefined,
+              standardized_status: "active",
             },
           }
         );
+
+        if (isTransitioningToActive) {
+          logger.info(
+            {
+              faFlightId,
+              previous_status: flightData.standardized_status,
+              new_status: "active",
+              actual_off: newPositionData.actual_off,
+            },
+            "Flight transitioned from taxiing to active state with actual_off"
+          );
+        }
 
         // Check for duplicate position
         const positionExists = await db
@@ -528,6 +536,7 @@ async function startPolling(
               departure_delay: departureDelay,
               arrival_delay: arrivalDelay,
               estimated_on: estimatedArrival,
+              standardized_status: "active",
             },
           });
         } else {
@@ -540,18 +549,9 @@ async function startPolling(
           );
         }
       } else {
-        // Handle pre-takeoff state
         logger.debug(
-          {
-            faFlightId,
-            first_position_time: newPositionData.first_position_time,
-            position: {
-              altitude: lastPosition.altitude,
-              groundspeed: lastPosition.groundspeed,
-              coordinates: `${lastPosition.latitude},${lastPosition.longitude}`,
-            },
-          },
-          "Waiting for takeoff (actual_off not available yet)"
+          { faFlightId, position: lastPosition },
+          "Taxiing state continues (no actual_off yet)"
         );
       }
     } catch (error) {
@@ -614,7 +614,7 @@ async function handleStartTracking(req: Request): Promise<Response> {
         getFlightPosition(faFlightId),
       ]);
 
-      // Check if flight has started yet
+      // Check if plane has started moving (at least (1 position) even within the airport (taxiing))
       if (!positionData.last_position || !positionData.first_position_time) {
         logger.info(
           {
@@ -644,15 +644,20 @@ async function handleStartTracking(req: Request): Promise<Response> {
       const currentTime = new Date();
       const firstPositionTime = new Date(positionData.first_position_time);
       const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
-      let positions: FlightTrackObject[] = [];
+      let existingPositions: FlightTrackObject[] = [];
 
       if (currentTime.getTime() > firstPositionTime.getTime() + bufferTime) {
         // We need historical data if we're starting tracking after first position time
         const res = await getFlightTrack(faFlightId);
-        positions = res.positions;
+        existingPositions = res.positions;
       }
 
-      await startPolling(faFlightId, positionData, flightData, positions);
+      await startPolling(
+        faFlightId,
+        positionData,
+        flightData,
+        existingPositions
+      );
       return jsonWithCors({ message: "Tracking started successfully" });
     } catch (error) {
       logger.error({ err: error }, "Error starting flight tracking");
@@ -840,24 +845,25 @@ async function restoreTrackingState() {
     const currentTime = new Date();
     const firstPositionTime = new Date(positionData.first_position_time);
     const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
-    let positions: FlightTrackObject[] = [];
+    let existingPositions: FlightTrackObject[] = [];
 
     if (currentTime.getTime() > firstPositionTime.getTime() + bufferTime) {
       // We need historical data if we're starting tracking after first position time
       logger.info("Fetching historical track data from API...");
       const res = await getFlightTrack(flight.fa_flight_id);
-      positions = res.positions;
+      existingPositions = res.positions;
       logger.info(
-        { count: positions.length },
+        { count: existingPositions.length },
         "Retrieved historical positions from API"
       );
 
-      if (positions && positions.length > 0) {
+      if (existingPositions && existingPositions.length > 0) {
         logger.info(
           {
-            firstTimestamp: positions[0]?.timestamp || "unknown",
+            firstTimestamp: existingPositions[0]?.timestamp || "unknown",
             lastTimestamp:
-              positions[positions.length - 1]?.timestamp || "unknown",
+              existingPositions[existingPositions.length - 1]?.timestamp ||
+              "unknown",
           },
           "API track data range"
         );
@@ -868,7 +874,7 @@ async function restoreTrackingState() {
       flight.fa_flight_id,
       positionData,
       flightData,
-      positions
+      existingPositions
     );
 
     logger.info(
