@@ -466,7 +466,7 @@ async function startPolling(
 
         // Calculate arrival delay based on estimated arrival
         const arrivalDelay = estimatedArrival
-          ? calculateArrivalDelay(estimatedArrival, flightData.scheduled_in)
+          ? calculateArrivalDelay(estimatedArrival, flightData.scheduled_on)
           : flightData.arrival_delay || 0;
 
         // Update actual_off in database if changed
@@ -1122,12 +1122,12 @@ function calculateDepartureDelay(
 
 function calculateArrivalDelay(
   actualOn: string | null,
-  scheduledIn: string | null
+  scheduledOn: string | null
 ): number {
-  if (!actualOn || !scheduledIn) return 0;
+  if (!actualOn || !scheduledOn) return 0;
 
   const actualTime = new Date(actualOn).getTime();
-  const scheduledTime = new Date(scheduledIn).getTime();
+  const scheduledTime = new Date(scheduledOn).getTime();
 
   return Math.round((actualTime - scheduledTime) / 1000); // Delay in seconds
 }
