@@ -244,7 +244,7 @@ async function getInitialState() {
     : null;
 
   return {
-    start_time: firstScheduledFlight?.scheduled_off,
+    start_time: firstScheduledFlight?.actual_off,
     end_time: lastFlight?.actual_on ?? null,
     client_count: clientConnections.size,
     active_flight: activeFlightData,
