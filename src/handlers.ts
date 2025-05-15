@@ -12,6 +12,7 @@ import {
   type FlightSearchResponse,
   type DirectFlightResponse,
   type FlightMetadata,
+  type FlightTrackObject,
 } from "./types";
 import { db, formatFlightData } from "./utils";
 import logger from "./logger";
@@ -335,4 +336,32 @@ export const updateWaypoints = async (req: Request) => {
       { status: 500 }
     );
   }
+};
+export const updateFlightPath = async (req: Request) => {
+  const { fa_flight_id, flightTrack } = (await req.json()) as {
+    fa_flight_id: string;
+    flightTrack: FlightTrackObject[];
+  };
+
+  const flight = await db.collection<FlightMetadata>("flights").findOne({
+    fa_flight_id,
+  });
+
+  if (!flight) {
+    return jsonWithCors({ error: "Flight not found" }, { status: 404 });
+  }
+
+  await db.collection("flights").updateOne(
+    { fa_flight_id },
+    {
+      $set: {
+        flightTrack: flightTrack,
+      },
+    }
+  );
+
+  return jsonWithCors({
+    status: "success",
+    message: "Flight path updated successfully",
+  });
 };

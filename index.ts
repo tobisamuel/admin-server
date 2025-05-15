@@ -12,6 +12,7 @@ import {
   getSavedFlights,
   deleteFlight,
   updateWaypoints,
+  updateFlightPath,
 } from "./src/handlers";
 import logger from "./src/logger";
 import {
@@ -66,6 +67,10 @@ const server = Bun.serve({
     },
     "/api/tracking/stop": {
       POST: handleStopTracking,
+      OPTIONS: handleCorsOptions,
+    },
+    "/api/update_flight_path": {
+      POST: updateFlightPath,
       OPTIONS: handleCorsOptions,
     },
     // Health check endpoint
@@ -583,7 +588,7 @@ async function startPolling(
         return;
       }
     }
-  }, 60000); // Poll every 60 seconds to respect API rate limits
+  }, 30000); // Poll every 30 seconds to respect API rate limits
 
   return updatedFlight;
 }
